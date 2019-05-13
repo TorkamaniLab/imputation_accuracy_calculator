@@ -1,5 +1,7 @@
 # A tool for calculating imputation accuracy by comparing imputation results to WGS data.
 
+Documentation and scripts provided for calculating imputation accuracy. Tested using Minimac4 and Imputation Autoencoder (vcf format imputed files).
+
 ## Command line arguments are:
 
 - ref_file: reference panel used for imputation
