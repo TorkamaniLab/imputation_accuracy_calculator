@@ -2,6 +2,11 @@
 
 Documentation and scripts provided for calculating imputation accuracy. Tested using Minimac4 and Imputation Autoencoder (vcf format imputed files).
 
+## Requirements
+
+- plink v1.9: used to calculate MAFs
+- python v3: source code was implemented and tested on python 3.6
+
 ## Command line arguments are:
 
 - ref_file: reference panel used for imputation
@@ -10,7 +15,7 @@ Documentation and scripts provided for calculating imputation accuracy. Tested u
 - WGS_file: ground truth file, containing experimentally determined genotypes (i.e. Whole Genome Sequencing data)
 - accuracy_result.txt: name for the output file, can be any name by user's choice
 
-All files provided must be in vcf format, uncompressed, positions and alleles must match.
+All files provided must be in vcf format, uncompressed, positions and alleles must match. It is not necessary to provide allele frequencies, since the tool will calculate it internally using plink v1.9.
 
 ## How to run:
 ```
