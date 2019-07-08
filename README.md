@@ -15,7 +15,7 @@ Documentation and scripts provided for calculating imputation accuracy. Tested u
 - WGS_file: ground truth file, containing experimentally determined genotypes (i.e. Whole Genome Sequencing data)
 - accuracy_result.txt: name for the output file, can be any name by user's choice
 
-All files provided must be in vcf format, uncompressed, positions and alleles must match. It is not necessary to provide allele frequencies, since the tool will calculate it internally using plink v1.9.
+All files provided must be in vcf format, uncompressed, positions and alleles must match. In other words: NO SWAPS, NO FLIPS, SAME BUILD!!! It is not necessary to provide allele frequencies, since the tool will calculate it internally using plink v1.9.
 
 ## How to run:
 ```
