@@ -1,686 +1,1048 @@
-import numpy as np
-import tensorflow as tf
-from tensorflow.contrib.memory_stats.python.ops.memory_stats_ops import BytesInUse
-
-import itertools
-import seaborn as sns
+import multiprocessing as mp
+import timeit
 import pandas as pd
-from scipy.stats import linregress
-from scipy import stats
-# sorting results
-from collections import defaultdict
-from operator import itemgetter
-import timeit #measure runtime
-import random #masking
-import multiprocessing
-import operator
-from functools import partial
-import allel
-from scipy.spatial.distance import squareform
+from functools import partial # pool.map with multiple args
+import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
+import numpy as np
+from cyvcf2 import VCF
+#from scipy.stats import linregress #r2
+import gzip
+import argparse
 import sys
 
-import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
-import statistics
-
-from scipy.stats import linregress
-#linregress(a, b)[2] gives the correlation, correcting for nans due to monomorphic predictions
-#linregress(a, b)[3] gives the p-value correl
-
-# In[14]:
+#HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
 
-do_parallel=True
-do_parallel_MAF=True
+#split inut data into chunks so we can prepare batches in parallel
+#imputed_test.vcf
+#ref_test.vcf
+#WGS_test.vcf
+#.
+#genotype_array_test.vcf
 
-MAF_all_var_vector = []
-MAF_all_var = []
+max_total_rows = 10000 #maximun number of rows to be loading together, summing all chunks loaded by all cores
 
-mapped_indexes = []
+n_max=1000 #maximun number of variants per chunk per core, avoid RAM overload
+n_min=100 #minimun number of variants per chunk per core, avoid interprocess communication overload
 
-known_indexes = []
-
-ncores = multiprocessing.cpu_count() #for parallel processing
-#ncores=8
-
-input_MAF = False #calculate input MAF, if False, calculate REF MAF only
-
-def convert_genotypes_to_int(indexes, posfile, file, categorical="False", alt_signal_only="False"):
-    print("process:", multiprocessing.current_process().name, "arguments:", indexes, ":", file, ":", categorical)
-    #
-    j=0
-    command = "cut -f"
-
-    for i in range(len(indexes)):
-        #print(str(indexes[i]))
-        command = command + str(indexes[i]+1)
-        if(i<len(indexes)-1):
-            command = command + ","
-
-    command = command + " " + file
-    #print(command)
-    result = sp.check_output(command, encoding='UTF-8', shell=True)
-    #result = result.stdout
-    df = []
-
-
-    refpos = pd.read_csv(posfile, sep='\t', comment='#',header=None)
-    refpos = pd.Series(refpos[1], index=range(len(refpos[1])))
-
-    first=True
-    i=0
-    for ln in result.split('\n'):
-        i+=1
-        if(not ln.startswith("#")):
-            if(first==False and ln):
-                tmp = ln.split('\t')
-                #print(i, ": ", tmp, ": ", ln)
-                df.append(tmp)
-            else:
-                first=False
-
-    df = list(map(list, zip(*df)))
-
-
-    inpos_result = sp.check_output("cut -f 2 "+file, encoding='UTF-8', shell=True)
-
-
-    first=True
-    i=0
-    inpos_df = []
-    for ln in inpos_result.split('\n'):
-        i+=1
-        if(not ln.startswith("#")):
-            if(first==False and ln):
-                tmp = ln.split('\t')
-                #print(i, ": ", tmp, ": ", ln)
-                inpos_df.append(tmp)
-            else:
-                first=False
-
-    inpos_df = list(map(list, zip(*inpos_df)))
-
-    #print("INPOS DF",inpos_df[0])
-
-    inpos_df = map(int, inpos_df[0])
-
-    inpos = pd.Series(range(len(df[1])), index=inpos_df)
-
-    #print(inpos)
-    #print(refpos)
-    
-    #print("BATCH SHAPE: ", len(df), len(df[0]))
-    #print(df[0])
-    new_df = 0
-    if(categorical=="False"):
-        new_df = np.zeros((len(df),len(refpos),2))
-        #new_df = np.zeros((df.shape[1]-9,len(refpos)*2))
-    else:
-        new_df = np.zeros((len(df),len(refpos)))
-    #print(type(df))
-    i = 0 #RR column index
-    j = 0 #RR row index
-    idx = 0
-    my_hom = 2
-
-    #my_hom = 1
-
-    print(len(df))
-    print(len(df[0]))
-    myidx = 0
-
-    #print("KEYSSSSSSSSSSSS",inpos.keys())
-
-    while i < len(df): #sample index, total-9 (9 for first comment columns)
-
-        #if(j==(len(df)-1)):
-        #    print(j)
-        
-        j = 0 #variant index, while variant index less than total variant count
-        while j < len(refpos): #"|" is present when phased data is proved, "/" is usually unphased
-            #print(j, refpos[j])
-            #print(inpos)
-            #if(refpos[j]==22067276):
-            #    print("found int")
-            #if(refpos[j]=="22067276"):
-            #    print("found str")
-            
-            if(refpos[j] in inpos.keys()):
-                myidx = inpos[refpos[j]]
-                #print(myidx)
-                df[i][myidx] = str(df[i][myidx])
-                #print(df[i][myidx])
-
-                if(df[i][myidx].startswith('1|1') or df[i][myidx].startswith('1/1')):
-                    if(categorical=="True" or alt_signal_only==True):
-                        new_df[idx][j] = 2
-                    else:
-                        new_df[idx][j][0] = 0
-                        new_df[idx][j][1] = my_hom
-                elif(df[i][myidx].startswith('1|0') or df[i][myidx].startswith('0|1') or df[i][myidx].startswith('1/0') or df[i][myidx].startswith('0/1')):
-                    if(categorical=="True" or alt_signal_only==True):
-                        new_df[idx][j] = 1
-                    else:
-                        new_df[idx][j][0] = 1
-                        new_df[idx][j][1] = 1
-                elif(df[i][myidx].startswith('0|0') or df[i][myidx].startswith('0/0')):
-                    if(categorical=="True"  or alt_signal_only==True):
-                        new_df[idx][j] = 0
-                    else:
-                        new_df[idx][j][0] = my_hom
-                        new_df[idx][j][1] = 0
-                else:
-                    if(categorical=="True"):
-                        new_df[idx][j] = -1
-                    elif(alt_signal_only==True):
-                        new_df[idx][j] = 0
-                    else:
-                        new_df[idx][j][0] = 0
-                        new_df[idx][j][1] = 0
-                #RR I forgot to mention that we have to take into account possible missing data
-                #RR in case there is missing data (NA, .|., -|-, or anything different from 0|0, 1|1, 0|1, 1|0) = 3
-            j += 1
-        i += 1
-        #pbar.update(1)
-        idx += 1
 
-    #print("processed_data")
-    #for i in range(10):
-    #    print(new_df[i][0])
 
-    #the data needs to be flattened because the matrix multiplication step (x*W)
-    #doesn't support features with subfeatures (matrix of vectors)
-    #new_df = np.reshape(new_df, (new_df.shape[0],new_df.shape[1]*2))
+#genotype_array_test.vcf  imputed_test.vcf  ref_test.vcf  WGS_test.vcf
 
-    return new_df.tolist()
 
-def process_data(posfile, file, categorical="False"):
+GA_file="genotype_array_test.vcf.gz"
+WGS_file="WGS_test.vcf.gz"
+IMPUTED_file="imputed_test.vcf.gz"
+REF_file=""
 
-    #Header and column names start with hashtag, skip those
-    ncols = pd.read_csv(file, sep='\t', comment='#',header=None, nrows=1)
-    ncols = ncols.shape[1]
-
-    print("Processing input data.")
-    print("categorical: ", categorical)
-    n_samples = ncols-9
-    #RR subtract 9 from the number of columns to get the number of SNPs,
-    #RR because the first 9 columns are variant information, not genotypes
-    print("number of samples: ", n_samples)
-
-    indexes = list(range(9,ncols))
-
-    start = timeit.default_timer()
-
-    #refpos = pd.Series(refpos[1], index=range(len(refpos[1])))
-
-    if(do_parallel==False):
-        results = convert_genotypes_to_int(indexes, file, categorical)
-        print( len(results), len(results[0]), len(results[0][0]))
-
-    else:
-        chunks = chunk(indexes, ncores )
-
-        pool = multiprocessing.Pool(ncores)
-
-        results = pool.map(partial(convert_genotypes_to_int, posfile=posfile, file=file, categorical=categorical),chunks)
-
-        pool.close()
-        pool.join()
-
-        #print(len(results), len(results[0]), len(results[0][0]) )
-
-        #for i in range(len(results)):
-        #    print(len(results[i]))
-
-        #merge outputs from all processes, reshaping nested list
-        results = [item for sublist in results for item in sublist]
-
-    #print(len(results), len(results[0]), len(results[0][0]) )
-
-    print("This file contains {} features (SNPs) and {} samples (subjects)".format(len(results[0]), n_samples))
-
-    indexes = list(range(len(results[0])))
-
-    results = np.asarray(results)
-    #tf.reset_default_graph()
-    #with tf.Session(config=config) as sess:
-    #    results = sess.run(tf.constant(results))
-
-    #reset tensorflow session
-    #tf.reset_default_graph()
-    #sess.close()
-
-    #new_df = [[0] * len(df) for i in range(len(df_T)-8)]
-    #new_df = convert_genotypes_to_int(df, categorical)
-
-    stop = timeit.default_timer()
-    print('Time to load the data (sec): ', stop - start)
-
-    start = timeit.default_timer()
-
-
-    global MAF_all_var
-
-    if(do_parallel_MAF == False and input_MAF==True):
-
-         MAF_all_var = calculate_MAF_global_GPU(indexes, results, categorical)
-
-    elif(input_MAF==True):
-        chunks = chunk(indexes,ncores)
-
-        pool = multiprocessing.Pool(ncores)
-
-        MAF_all_var = pool.map(partial(calculate_MAF_global, inx=results, categorical=categorical),chunks)
-
-        pool.close()
-        pool.join()
-
-        #merge outputs from all processes, reshaping nested list
-        MAF_all_var = [item for sublist in MAF_all_var for item in sublist]
-
-    global known_indexes
-
-    if(input_MAF==True):
-        global MAF_all_var_vector
-        MAF_all_var_vector = []
-
-        for i in range(len(MAF_all_var)):
-            MAF_all_var_vector.append(MAF_all_var[i])
-            MAF_all_var_vector.append(MAF_all_var[i])
-            if(categorical==True):
-                MAF_all_var_vector.append(MAF_all_var[i])
-        
-        print("ALLELE FREQUENCIES", MAF_all_var)
-        print("LENGTH1", len(MAF_all_var))
-
-        known_indexes = []
-        for j in range(len(MAF_all_var)):
-            if(MAF_all_var[j] != 0 ):
-                #print("Adding known variant", j)
-                known_indexes.append(j)
-    else:
-        known_indexes = []
-        i=0
-        while i < len(results[0]):
-            if(results[0][i][0] != 0 or results[0][i][1] != 0):
-                #print("Adding known variant", i)
-                known_indexes.append(i)
-            i=i+1
-
-    #print("LKKKKKKKKKKKKKKKKKKKKK", known_indexes)
-
-    stop = timeit.default_timer()
-    print('Time to calculate MAF (sec): ', stop - start)
+X_mode="False"
+DEBUG=False
+
+vout=""
+sout=""
+
+#new chunk, works on ND arrays instead of taking indexes
+def chunk(data, ncores=mp.cpu_count()):
+
+    n=int(round(len(data)/ncores-0.5))
+    if(n>n_max):
+        n=n_max
+    if(n<n_min):
+        n=n_min
+    chunks=[data[i:i + n] for i in range(0, len(data), n)]
+
+    return chunks
+
+
+def convert_and_reshape(in_dict, x_in, y_in):
+
+    l=len(in_dict[0])
+
+    if(DEBUG==True):
+        print("INPUTS",x_in,y_in)
+
+
+    x=np.round(np.copy(x_in))
+    y=np.round(np.copy(y_in))
+
+    if(DEBUG==True):
+        print("ROUND",x,y)
+
+
+    x_o=[[in_dict[i] for i in row] for row in x]
+    y_o=[[in_dict[i] for i in row] for row in y]
+
+    x_o=np.asarray(x_o)
+    y_o=np.asarray(y_o)
+
+    if(DEBUG==True):
+        print("CONVERTED", x_o,y_o)
+
+    x_o=x_o.reshape(x_o.shape[0],x_o.shape[1]*l)
+    y_o=y_o.reshape(y_o.shape[0],y_o.shape[1]*l)
+
+    return x_o, y_o
+
+def f1_score(x_in, y_in):
+
+    #avoid division by zero
+    eps = 1e-8
+
+    #go along all axes since this function takes one variant per run, or one sample per run
+    #axis: 0 (vertical, per sample), 1 (horizontal, per SNP), None (all, per sample+variant)
+
+    dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
+
+    x, y = convert_and_reshape(dose_to_binary, 	x_in, y_in)
+    #x=x.flatten()
+    #y=y.flatten()
+
+    results=dict()
+
+    for axis in [0,1]:
+
+        TP = np.count_nonzero(np.multiply(x, y), axis=axis)
+        FP = np.count_nonzero(np.multiply(x, np.subtract(y,1.0)), axis=axis)
+        FN = np.count_nonzero(np.multiply(np.subtract(x,1.0),y), axis=axis)
+
+        #go ahead and calculate macro F-score if on orizontal axis
+        if(axis==1):
+            TP = np.add(TP, eps)
+            precision = np.divide(TP, np.add(TP, FP))
+            recall = np.divide(TP, np.add(TP, FN))
+            top = np.multiply(precision, recall)
+            bottom = np.add(precision, recall)
+
+            #macro F-score, per feature, no weights
+            macro_f1 = np.multiply(2.0, np.divide(top,bottom))
+
+            results['macro_f1']=macro_f1
+
+            if(X_mode!="False"):
+                weights = np.sum(y_in, axis=axis)
+                results['top'] = top
+                results['precision'] = precision
+                results['recall'] = recall
+                results['weights'] = weights
+
+            #weights = np.divide(weights,np.sum(weights))
+            #weights = np.interp(weights, (weights.min(), weights.max()), (0.0, 1.0))
+
+            #top = np.multiply(np.add(weights,1.0), top)
+            #bottom = np.add(np.multiply(weights,precision), recall)
+            #w_macro_f1 = np.divide(top,bottom)
+            #results['w_macro_f1'] = w_macro_f1
+            #w_macro_f1 = np.round(w_macro_f1, decimals=3)
+
+            #macro_f1 = np.round(macro_f1, decimals=3)
+
+        else:
+            TP = TP.reshape(int(len(TP)/2),2)
+            FP = FP.reshape(int(len(FP)/2),2)
+            FN = FN.reshape(int(len(FN)/2),2)
+            TP = np.sum(TP, axis=1)
+            FP = np.sum(FP, axis=1)
+            FN = np.sum(FN, axis=1)
+            #true positives per sample
+            results['TP']=TP
+            #false positives per sample
+            results['FP']=FP
+            #true negatives per sample
+            results['FN']=FN
+            #sample size
+            results['N']=len(y)*2
 
     return results
 
-def convert_to_float(frac_str):
-    try:
-        return float(frac_str)
-    except ValueError:
-        try:
-            num, denom = frac_str.split('/')
-        except ValueError:
-            return None
-        try:
-            leading, num = num.split(' ')
-        except ValueError:
-            return float(num) / float(denom)
-        if float(leading) < 0:
-            sign_mult = -1
+
+def accuracy_ratio(x_in,y_in):
+
+    #Some people from genomics call this "concordance rate"
+    #but that is just a fancy name for the old accuracy ratio used in machine learning
+    #which is basically the number of correct predictions divided by the total number of predictions
+
+    eps=1e-15
+
+    dose_to_probability = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
+
+    x, y = convert_and_reshape(dose_to_probability, x_in,y_in)
+
+    results=dict()
+
+    correct_prediction = np.equal( x, y )
+
+    accuracy = np.mean(correct_prediction.astype(float), axis=1)
+    correct_pred_per_sample = np.sum(correct_prediction.astype(float), axis=0)
+
+    correct_pred_per_sample = correct_pred_per_sample.reshape(int(len(correct_pred_per_sample)/3),3)
+    correct_pred_per_sample = np.sum(correct_pred_per_sample, axis=1)
+    correct_pred_per_sample = np.divide(correct_pred_per_sample,3.0)
+
+    #xy=np.multiply(x,y)
+
+    #xy_per_sample=np.sum(xy,axis=0)
+
+    #xy_per_sample=xy_per_sample.reshape(int(xy_per_sample.shape[0]/3),-1).sum(1)
+
+    #P0 = np.divide(np.sum(xy,axis=1), len(y[0])/3)
+
+    p11 = np.multiply(y[:,0::3],x[:,0::3])
+    p11s = np.sum(p11,axis=0)
+    p11 = np.sum(p11,axis=1)
+    p22 = np.multiply(y[:,1::3],x[:,1::3])
+    p22s = np.sum(p22,axis=0)
+    p22 = np.sum(p22,axis=1)
+    p33 = np.multiply(y[:,2::3],x[:,2::3])
+    p33s = np.sum(p33,axis=0)
+    p33 = np.sum(p33,axis=1)
+
+
+    xy_per_sample=np.add(p11s,np.add(p22s,p33s))
+
+    xy = np.add(p11,np.add(p22,p33))
+
+    P0 = np.divide(xy, np.divide(len(y[0]),3.0))
+
+    p12 = np.multiply(y[:,0::3],x[:,1::3])
+    p12 = np.sum(p12,axis=1)
+
+    p21 = np.multiply(y[:,1::3],x[:,0::3])
+    p21 = np.sum(p21,axis=1)
+
+    p13 = np.multiply(y[:,0::3],x[:,2::3])
+    p13 = np.sum(p13,axis=1)
+
+    p31 = np.multiply(y[:,2::3],x[:,0::3])
+    p31 = np.sum(p31,axis=1)
+
+    p23 = np.multiply(y[:,1::3],x[:,2::3])
+    p23 = np.sum(p23,axis=1)
+
+    p32 = np.multiply(y[:,2::3],x[:,1::3])
+    p32 = np.sum(p32,axis=1)
+
+    Ns=len(y[0])/3
+
+    #p11 = np.sum(xy[:,0::3], axis=1)
+    #p22 = np.sum(xy[:,1::3], axis=1)
+    #p33 = np.sum(xy[:,2::3], axis=1)
+
+    N1_i = np.add(np.add(p11, p21), p31)
+    N2_i = np.add(np.add(p12, p22), p32)
+    N3_i = np.add(np.add(p13, p23), p33)
+
+    N1_j = np.add(np.add(p11, p12), p13)
+    N2_j = np.add(np.add(p21, p22), p23)
+    N3_j = np.add(np.add(p31, p32), p33)
+
+    N1_ij = np.multiply(N1_i, N1_j)
+    N2_ij = np.multiply(N2_i, N2_j)
+    N3_ij = np.multiply(N3_i, N3_j)
+
+    num = np.add(N1_ij, np.add(N2_ij, N3_ij))
+    den = np.power(Ns,2)
+
+    num = np.add(eps,num)
+    den = np.add(eps,den)
+
+    Pc = np.divide(num,den)
+
+    num = np.subtract(P0,Pc)
+    den = np.subtract(1.0,Pc)
+
+    IQS = np.divide(num,den)
+
+    results['accuracy_per_var'] = accuracy
+    results['correct_pred_per_sample'] = correct_pred_per_sample
+    results['xy_per_sample'] = xy_per_sample
+    results['P0_per_var'] = P0
+    results['IQS'] = IQS
+    results['N'] = len(y)
+
+    if(DEBUG==True):
+        print(results)
+
+    return results
+
+def pearson_r2(x_in, y_in):
+
+    results=dict()
+    r2_results_l = []
+    p_results = []
+
+    '''
+    for pos in x_in.keys():
+        r2,p = linregress(x_in[pos], y_in[pos])[2:4]
+        r2=r2**2
+        r2_results_l.append(np.round(r2, decimals=3))
+        p_results.append(np.round(p, decimals=3))
+    '''
+
+    x = np.asarray(list(x_in.values()), dtype=float)
+    y = np.asarray(list(y_in.values()), dtype=float)
+
+
+    #per variant
+    x_sum = np.sum(x, axis=1)
+    y_sum = np.sum(y, axis=1)
+    xy_sum = np.sum(np.multiply(x,y), axis=1)
+    x_squared_sum = np.sum(np.power(x,2), axis=1)
+    y_squared_sum = np.sum(np.power(y,2), axis=1)
+    N=len(y[0])
+
+    num=np.subtract(np.multiply(xy_sum, N), np.multiply(x_sum, y_sum) )
+    den=np.multiply(x_squared_sum, N)
+    den=np.subtract(den, np.power(x_sum,2))
+    den2=np.multiply(y_squared_sum, N)
+    den2=np.subtract(den2, np.power(y_sum,2))
+    den=np.sqrt(np.multiply(den, den2))
+
+    eps=1e-15
+
+    num = np.add(eps,num)
+    den = np.add(eps,den)
+
+    r2_per_variant=np.divide(num,den)
+    r2_per_variant=np.power(r2_per_variant,2)
+    r2_per_variant=np.round(r2_per_variant, decimals=3)
+
+    #per sample
+    x_sum = np.sum(x, axis=0)
+    y_sum = np.sum(y, axis=0)
+    xy_sum = np.sum(np.multiply(x,y), axis=0)
+    x_squared_sum = np.sum(np.power(x,2), axis=0)
+    y_squared_sum = np.sum(np.power(y,2), axis=0)
+
+    #results['r2_per_variant_linregress']=r2_results_l
+    results['r2_per_variant_manual']=r2_per_variant
+    #results['p_per_variant']=p_results
+
+    results['x_sum']=x_sum
+    results['y_sum']=y_sum
+    results['xy_sum']=xy_sum
+    results['x_squared_sum']=x_squared_sum
+    results['y_squared_sum']=y_squared_sum
+
+    #results['mean_x_per_sample']=mean_x
+    #results['mean_y_per_sample']=mean_y
+    #results['var_y_per_sample']=var_y
+    #results['var_x_per_sample']=var_x
+    #results['covar']=covar
+    results['N']=len(y)
+
+    return results
+
+def present_in_GA(chr, pos):
+
+    GA = VCF(GA_file)
+
+    coordinates = str(chr)+':'+pos+'-'+pos
+    result=False
+    for variant in GA(coordinates):
+        result=True
+
+    return result
+
+
+def extract_ga_positions(coordinates):
+
+    GA = VCF(GA_file)
+    result=[]
+
+    for variant in GA(coordinates):
+        result.append(str(variant.CHROM)+':'+str(variant.end))
+
+    if(len(result)==0):
+        return False
+
+    return result
+
+
+def extract_vcf_lines(coordinates):
+
+    WGS = VCF(WGS_file)
+
+    lines=[]
+
+    for variant in WGS(coordinates):
+       lines.append(str(variant))
+
+    if(len(lines))>0:
+        return lines
+    else:
+        return False
+
+def extract_sample_ids_from_vcf(input_file):
+
+    sample_ids=False
+
+    if input_file.endswith(".gz"):
+        file = gzip.open(input_file,'rb')
+    else:
+        file = open(input_file)
+
+    while True:
+        line=file.readline()
+
+        if input_file.endswith(".gz"):
+            line=line.decode('utf-8')
+            #line=line.split('\n')
+        if(line[0]=='#'):
+            if(line.startswith("#CHROM")):
+                sample_ids=line.split('\t')[9:]
+                sample_ids[-1]=sample_ids[-1].replace('\n','')
+                break
         else:
-            sign_mult = 1
-        return float(leading) + sign_mult * (float(num) / float(denom))
+            break
+
+    file.close()
+
+    return sample_ids
 
 
-def read_MAF_file(file):
+def convert_gt_to_int(gt):
 
-#    CHR         SNP   A1   A2          MAF  NCHROBS
+    genotype_to_int={'0/0': 0, '0|0': 0.0, '0/1': 1, '0|1':1, '1/0':1, '1|0':1, '1/1':2, '1|1':2, './0':-1, './1':-1, './.':-1, '0/.':-1, '1/.':-1}
+
+    result=genotype_to_int[gt[0:3]]
+
+    return result
+
+def extract_dose_from_line(vcf_line):
+
+    vcf_line=vcf_line.split('\t')
+
+    vcf_line[-1]=vcf_line[-1].replace('\n','')
+
+    result_line=[]
+    pos=vcf_line[0]+':'+vcf_line[1]
+    result_line.append(pos)
+
+    snp_id=vcf_line[2]
+
+    for column in vcf_line[9:]:
+        if(':' in column):
+            gen_dose=column.split(':')
+            result=gen_dose[1]
+            result=float(result)
+        else:
+            result=convert_gt_to_int(column[0:3])
+        result_line.append(result)
+
+    return result_line, snp_id
+
+def remove_positions(pos_list, dict):
+
+    for pos in pos_list:
+        dict.pop(pos, None)
+
+def intersect_positions(dict_1,dict_2):
+
+   s1 = set(dict_1)
+   s2 = set(dict_2)
+   common_keys = s1 & s2
+   subdict_1 = {x: dict_1[x] for x in common_keys if x in dict_1}
+   subdict_2 = {x: dict_2[x] for x in common_keys if x in dict_2}
+
+   return subdict_1, subdict_2
+
+def calculate_MAF(input_file, coordinates):
+    #plink --vcf HRC.r1-1.EGA.GRCh37.chr9.haplotypes.9p21.3.vcf.clean4 --freq
+    #out_name=input_file.split('.gz')[0]
+
+    cmd="bcftools +fill-tags "+input_file+" -r "+coordinates+"  -- -t AF | bcftools query -f '%CHROM:%POS\t%AF\n'"
+
+    #result = sp.check_output(cmd, encoding='UTF-8', shell=True)
+    result = sp.check_output(cmd, encoding='UTF-8', shell=True)
+    #result = sp.check_output("plink --vcf "+input_file+" --freq --out "+out_name, encoding='UTF-8', shell=True)
+    maf_result={}
+    result=result.split('\n')
+
+    for line in result:
+        line=line.split('\t')
+        if(len(line)>1):
+            maf=float(line[1])
+            if(maf>0.5):
+                maf=str(1-maf)
+                line[1]=maf
+            maf_result[line[0]]=line[1]
+
+    #result = sp.check_output("plink --vcf "+input_file+" --freq --out "+out_name, encoding='UTF-8', shell=True)
+
+    #maf_result = read_MAF_file(out_name+".frq")
+
+    return maf_result
+
+
+def read_MAF_file(frq_file):
+
+#   CHR         SNP   A1   A2          MAF  NCHROBS
 #   9   rs1333039    G    C       0.3821    54330
 #   9 rs138885769    T    C    0.0008099    54330
 #   9 rs548022918    T    G     0.000589    54330
     pd.set_option('display.float_format', '{:.6f}'.format)
 
-    maftable = pd.read_csv(file, sep='\s+', comment='#')
+    maftable = pd.read_csv(frq_file, sep='\s+', comment='#')
     maftable['MAF'] = maftable['MAF'].astype(float)
 
-    global MAF_all_var
-    
-    MAF_all_var = maftable['MAF'].values.tolist()
-    print("#####REF MAF#####",MAF_all_var)
+    maf = maftable['MAF'].values.tolist()
+    snp = maftable['SNP'].values.tolist()
 
-#this calculates MAFs for all variants of a data set
-def calculate_MAF_global(indexes, inx, categorical="False"):
-    j=0
-    if(do_parallel_MAF==True):
-        getter = operator.itemgetter(indexes)
-        x = list(map(list, map(getter, np.copy(inx))))
+    seen = set()
+    for i in snp:
+        if(i in seen):
+            print("WARNING: repeated SNP ID \"",i,"\". MAF results may not be reliable, please give unique names to your WGS vcf.")
+        seen.add(i)
+
+    result = dict(zip(snp, maf))
+
+    return result
+
+
+
+def process_lines(lines):
+
+    results=[]
+    result_line=[]
+    pos=0
+    chr=0
+    start_pos='0'
+    first=True
+
+    imputed_dosages={}
+    wgs_dosages={}
+    ga_positions=[]
+    snp_ids={}
+
+    for line in lines:
+        #skip comments
+        if(line[0]=='#'):
+            continue
+        if(first==True):
+            chr, start_pos = line.split('\t')[0:2]
+            first=False
+
+        pos_dosages_tmp, snp = extract_dose_from_line(line)
+        imputed_dosages[pos_dosages_tmp[0]] = pos_dosages_tmp[1:]
+
+    end_pos = lines[-1].split('\t')[1]
+
+    coordinates = chr+':'+start_pos+'-'+end_pos
+
+    ga_pos = extract_ga_positions(coordinates)
+    wgs_lines = extract_vcf_lines(coordinates)
+
+    for line in wgs_lines:
+        pos_dosages_tmp, snp = extract_dose_from_line(line)
+        wgs_dosages[pos_dosages_tmp[0]] = pos_dosages_tmp[1:]
+        snp_ids[pos_dosages_tmp[0]]=snp
+
+    if(ga_pos!=False):
+        remove_positions(ga_pos, imputed_dosages)
+
+        if(wgs_lines!=False):
+            remove_positions(ga_pos, wgs_dosages)
+
+    if(len(imputed_dosages)==0 or len(wgs_dosages)==0):
+        #print(ga_pos)
+        return [False]
+
+    imputed_dosages, wgs_dosages = intersect_positions(imputed_dosages, wgs_dosages)
+    snp_ids, wgs_dosages = intersect_positions(snp_ids, wgs_dosages)
+
+    maf_dict={}
+    wgs_maf_dict={}
+    imp_maf_dict={}
+    #pos->maf
+    if(REF_file!=""):
+        maf_dict=calculate_MAF(REF_file, coordinates)
+        wgs_maf_dict=calculate_MAF(WGS_file, coordinates)
+        wgs_maf_dict, snp_ids = intersect_positions(wgs_maf_dict, snp_ids)
+
     else:
-        x = inx
-    MAF_list = []
-    #print("LENGTH", len(x[0]))
-    while j < (len(x[0])):
-        ref = 0
-        alt = 0
-        MAF = 0        
-        for i in range(len(x)):
-            ref+=x[i][j][0]
-            alt+=x[i][j][1] 
-        if(ref==0):
-            MAF=0
-        elif(alt<=ref):
-            MAF=alt/(ref+alt)
-            #major=ref/len(y)
-        else:
-            MAF=ref/(ref+alt)
-        MAF_list.append(MAF)
-        j+=1
-    return MAF_list
+        maf_dict=calculate_MAF(WGS_file, coordinates)
+
+    maf_dict, snp_ids = intersect_positions(maf_dict, snp_ids)
+
+    imp_maf_dict=calculate_MAF(IMPUTED_file, coordinates)
+
+    imp_maf_dict, snp_ids = intersect_positions(imp_maf_dict, snp_ids)
+
+    #for pos in imputed_dosages:
+    #    if(pos in wgs_dosages):
+    f1_dict = f1_score(list(imputed_dosages.values()), list(wgs_dosages.values()))
+    acc_dict = accuracy_ratio(list(imputed_dosages.values()), list(wgs_dosages.values()))
+    r2_dict = pearson_r2(imputed_dosages, wgs_dosages)
+
+    #acc_dict['accuracy_per_var']
+    #acc_dict['correct_pred_per_sample']
+    #acc_dict['N']
+
+    #f-score per var
+    #f1_dict['macro_f1']
+    #true positives per sample
+    #f1_dict['TP']
+    #false positives per sample
+    #f1_dict['FP']
+    #true negatives per sample
+    #f1_dict['FN']
+    #sample size per chunk
+    #f1_dict['N']
+    #print(snp_ids)
+
+#    return list(imputed_dosages.keys()), f1_dict['macro_f1'], acc_dict['accuracy_per_var'], acc_dict['correct_pred_per_sample'], acc_dict['N'], f1_dict['TP'], f1_dict['FN'], f1_dict['N']
+
+    return list(imputed_dosages.keys()), f1_dict, acc_dict, r2_dict, snp_ids, maf_dict, imp_maf_dict, wgs_maf_dict
 
 
-# In[17]:
+def load_file_chunks(ncores):
+
+    imputed_sample_ids=extract_sample_ids_from_vcf(IMPUTED_file)
+    WGS_sample_ids=extract_sample_ids_from_vcf(WGS_file)
+
+    #print(len(imputed_sample_ids), len(WGS_sample_ids))
+
+    print('Processing ',len(imputed_sample_ids),'imputed samples')
+
+    read_total=0
+    chunk_total=0
+    calc_total=0
+    data = []
+    results = []
+    ci=0
+    cj=0
+    if IMPUTED_file.endswith(".gz"):
+        file = gzip.open(IMPUTED_file,'rb')
+    else:
+        file = open(IMPUTED_file)
+
+    while True:
+    #for line in file:
+        read_start = timeit.default_timer()
+
+        line=file.readline()
+        if IMPUTED_file.endswith(".gz"):
+            line=line.decode('utf-8')
+            #line=line.split('\n')
+
+        if(line!=""):
+            if(line[0]!='#'):
+                data.append(line)
+
+        read_stop = timeit.default_timer()
+        read_total += read_stop-read_start
+
+        if(len(data)>=max_total_rows or line == ""):
+            cj+=1
+            print("Processing chunk:",cj,"Max rows per chunk:",max_total_rows)
+            chunk_start = timeit.default_timer()
+            data=chunk(data)
+            chunk_stop = timeit.default_timer()
+            chunk_total += chunk_stop-chunk_start
+
+            calc_start = timeit.default_timer()
+
+            pool = mp.Pool(ncores)
+            results_tmp = pool.map(process_lines,data)
+            pool.close()
+            pool.join()
+
+            data=[]
+            results_tmp = [item for sublist in results_tmp for item in sublist if len(sublist)>1]
+            if(len(results_tmp)>0):
+                results.append(results_tmp)
+                ci+=1
+
+            calc_stop = timeit.default_timer()
+            calc_total += calc_stop-calc_start
+
+        if(line==""):
+            break
+
+    file.close()
+
+    #list(imputed_dosages.keys()), f1_dict, acc_dict
+
+   #imputed_dosages.keys(), 
+   #f1_dict['macro_f1'], acc_dict['accuracy_per_var'], acc_dict['correct_pred_per_sample'], acc_dict['N'], 
+   #f1_dict['TP'], f1_dict['FN'], f1_dict['N']
+
+    merge_start = timeit.default_timer()
+    if(ci==0):
+        print("After removing genotype array variants from imputed data, and intersecting WGS, no variants remained, exiting.")
+        exit(0)
 
 
-#flattens a 3D array dataset into a 2D array
-def flatten(mydata):
-    #subjects, SNP, REF/ALT counts
-    if(len(mydata.shape) == 3):
-        mydata = np.reshape(mydata, (mydata.shape[0],-1))
-    else:#do one hot encoding, depth=3 because missing (-1) is encoded to all zeroes
-        mydata = tf.one_hot(indices=mydata, depth=3)
-        mydata = tf.layers.flatten(mydata)#flattening to simplify calculations later (matmul, add, etc)
-    return mydata
+    #maf_start = timeit.default_timer()
+    #if(REF_file==""):
+    #    maf_dict = calculate_MAF(WGS_file)
+    #else:
+    #    maf_dict = calculate_MAF(REF_file)
+    #
+    #maf_stop = timeit.default_timer()
+
+    chunk_i=0
+
+    pos=[]
+    accuracy_per_var=[]
+    macro_f1=[]
+    weights=[]
+    top=[]
+    precision=[]
+    recall=[]
+    ref_mafs=[]
+    wgs_mafs=[]
+    imp_mafs=[]
+    snp_ids=[]
+
+    P0_per_var=[]
+    IQS=[]
+
+    #positions: index 0
+    #f1 result dictionary: index 1
+    #accuracy dictionary: 2
+    #r2 dictionary: 3
+    #snp ids: 4
+    #ref/wgs maf: 5
+    #imputed maf: 6
+    #wgs maf: 7
+    pi=0
+    fi=1
+    ai=2
+    ri=3
+    vi=4
+    mi=5
+    mi2=6
+    mi3=7
+
+    ni=8
 
 
-# In[18]:
+#    results['accuracy_per_var'] = accuracy
+#    results['correct_pred_per_sample'] = correct_pred_per_sample
+#    results['xy_per_sample'] = xy_per_sample
+#    results['P0_per_var'] = P0
+#    results['IQS'] = IQS
+#    results['N'] = len(y)
 
 
-#filters an imputed dataset (x) and it's respective WGS version (y) based on a upper and lower threshold for the MAFs provided
-def filter_by_MAF(x,y, MAFs, threshold1=0, threshold2=1, known_indexes=[], categorical=False):
-    
-    #print("a")
-    colsum=np.sum(y, axis=0)
-    indexes_to_keep = []
-    i = 0
-    j = 0
-    k = 0   
-    #print("b")
-    while i < len(MAFs):
-        #print("c")
-        #if(i in known_indexes):
-        #    print(i, "already in input, excluding it.")
-        if(MAFs[i]>threshold1 and MAFs[i]<=threshold2):
-            if(categorical==True or categorical=="True"):
-                if(colsum[j]!=0 or colsum[j+1]!=0 or colsum[j+2]!=0):
-                    indexes_to_keep.append(j)
-                    indexes_to_keep.append(j+1)
-                    indexes_to_keep.append(j+2)
-            elif(categorical==False or categorical=="False"):
-                if(colsum[k]!=0 or colsum[k+1]!=0):
-                    indexes_to_keep.append(k)
-                    indexes_to_keep.append(k+1)            
-        i += 1
-        j += 3
-        k += 2
-    #print("d")
-    #print(len(indexes_to_keep))
-    getter = operator.itemgetter(indexes_to_keep)
-    filtered_data_x = list(map(list, map(getter, np.copy(x))))
-    filtered_data_y = list(map(list, map(getter, np.copy(y))))
-    
-    return filtered_data_x, filtered_data_y
+    for chunk_i in range(ci):
+        #print('results shape:', len(results), len(results[chunk_i]),len(results[chunk_i][1]))
+        for si in list(range(len(results[chunk_i])))[0::ni]:
+            pos_tmp=list(results[chunk_i][si+pi])
+            pos.extend(pos_tmp)
+            snp_ids_tmp=list(results[chunk_i][si+vi].values())
 
-#calculates the correct number of predictions divided by total number of predictions, based on a upper and lower threshold for the MAFs provided
-def accuracy_maf_threshold(x, y, MAFs, threshold1=0, threshold2=1, categorical=False):
-    
+            mafs_tmp=list(results[chunk_i][si+mi].values())
+            if(REF_file!=""):
+                ref_mafs.extend(mafs_tmp)
+                mafs_tmp=list(results[chunk_i][si+mi3].values())
+            wgs_mafs.extend(mafs_tmp)
+            mafs_tmp=list(results[chunk_i][si+mi2].values())
+            imp_mafs.extend(mafs_tmp)
 
-    filtered_data_x, filtered_data_y = filter_by_MAF(x,y, MAFs, threshold1, threshold2, categorical)
-    
-    correct_prediction = np.equal( np.round( filtered_data_x ), np.round( filtered_data_y ) )
-    accuracy_per_marker = np.mean(correct_prediction.astype(float), 0)
-    
-    accuracy = np.mean(accuracy_per_marker)
-    standard_dev = statistics.stdev(accuracy_per_marker)
-    standard_err = standard_dev/np.sqrt(len(filtered_data_x[0]))
+            snp_ids.extend(snp_ids_tmp)
+            results[chunk_i][si+pi] = 0
+            results[chunk_i][si+vi] = 0
+            results[chunk_i][si+mi] = 0
+            accuracy_per_var.extend(list(results[chunk_i][si+ai]['accuracy_per_var']))
+            results[chunk_i][si+ai]['accuracy_per_var'] = 0
+            P0_per_var.extend(list(results[chunk_i][si+ai]['P0_per_var']))
+            results[chunk_i][si+ai]['P0_per_var'] = 0
+            IQS.extend(list(results[chunk_i][si+ai]['IQS']))
+            results[chunk_i][si+ai]['IQS'] = 0
+            macro_f1.extend(list(results[chunk_i][si+fi]['macro_f1']))
+            results[chunk_i][si+fi]['macro_f1'] = 0
+            if(X_mode!="False"):
+                weights.extend(list(results[chunk_i][si+fi]['weights']))
+                results[chunk_i][si+fi]['weights'] = 0
+                top.extend(list(results[chunk_i][si+fi]['top']))
+                results[chunk_i][si+fi]['top'] = 0
+                precision.extend(list(results[chunk_i][si+fi]['precision']))
+                results[chunk_i][si+fi]['precision'] = 0
+                recall.extend(list(results[chunk_i][si+fi]['recall']))
+                results[chunk_i][si+fi]['recall'] = 0
 
-    return accuracy, accuracy_per_marker, standard_err
+    #print('pos',pos[0:11], len(pos))
+    #print('accuracy_per_var',accuracy_per_var[0:11], len(accuracy_per_var))
+    #print('macro_f1',macro_f1[0:11], len(macro_f1))
 
 
-def r2_maf_threshold(x, y, MAFs, threshold1=0, threshold2=1, categorical=False):
-    
-
-    filtered_data_x, filtered_data_y = filter_by_MAF(x,y, MAFs, threshold1, threshold2, categorical)
-    r2 = []
-
-    for i in range(len(filtered_data_x)): 
-        r2tmp = linregress(filtered_data_x[i], filtered_data_y[i])[2]
-        r2.append(r2tmp)
-
-    r2mean = np.mean(r2)
-    standard_dev = statistics.stdev(r2)
-    standard_err = standard_dev/np.sqrt(len(r2))
-
-    return r2mean, standard_err, r2
-
-
-# In[19]:
-
-
-#split input data into chunks so we can procces data in parallel batches
-def chunk(L,nchunks):
-    L2 = list()
-    j = round(len(L)/nchunks)
-    chunk_size = j
-    i = 0
-    while i < len(L):
-        chunk = L[i:j]
-        L2.append(chunk)
-        i = j
-        j += chunk_size
-        if(j>len(L)):
-            j = len(L)
-    return L2
-
-
-def f1_score(x, y, MAFs, threshold1, threshold2, categorical=False, sess=tf.Session()):
-
-
-    y_pred, y_true = filter_by_MAF(x,y, MAFs, threshold1, threshold2, categorical)
-
-    f1s = [0, 0, 0]
-    vars = [0, 0, 0]
-    two = tf.cast(2.0, tf.float64)
-    eps = tf.cast(1e-8, tf.float64)
-
-    y_true = tf.cast(y_true, tf.float64)
-    y_pred = tf.cast(y_pred, tf.float64)
-
-    y_true = tf.clip_by_value(y_true, 0.0, 1.0) #in case the input encoding is [0,1,2]
-    y_pred = tf.clip_by_value(y_pred, 0.0, 1.0)
-
-    for i, axis in enumerate([None, 0]):
-        TP = tf.count_nonzero(tf.multiply(y_pred, y_true), axis=axis)
-        FP = tf.count_nonzero(tf.multiply(y_pred, tf.subtract(y_true,1.0)), axis=axis)
-        FN = tf.count_nonzero(tf.multiply(tf.subtract(y_pred,1.0),y_true), axis=axis)
-
-        TP = tf.cast(TP, tf.float64)
-        FP = tf.cast(FP, tf.float64)
-        FN = tf.cast(FN, tf.float64)
-
-        TP = tf.add(TP, eps)
-        precision = tf.divide(TP, tf.add(TP, FP))
-        recall = tf.divide(TP, tf.add(TP, FN))
-        #f1 = tf.multiply(two, tf.multiply(precision, tf.divide(recall, tf.add(precision, recall))))
-        top = tf.multiply(precision, recall)
-        bottom = tf.add(precision, recall)
-        f1 = tf.multiply(two, tf.divide(top,bottom))
-        mean, var = tf.nn.moments(f1, axes=axis)
-
-        f1s[i] = tf.reduce_mean(f1)
-        vars[i] = var
-      
-
-    weights = tf.reduce_sum(y_true, axis=0)
-    weights = tf.divide(weights,tf.reduce_sum(weights))
-
-    f1s[2] = tf.reduce_sum(tf.multiply(f1, weights))
-    mean, vars[2] = tf.nn.moments(tf.multiply(f1, weights), axes=axis)
-
-    micro, macro, weighted = sess.run(f1s)
-    myvars1, myvars2, myvars3 = sess.run(vars)
-    myvars1, myvars2, myvars3 = np.sqrt(myvars1), np.sqrt(myvars2), np.sqrt(myvars3)
-    
-    return micro, macro, weighted, myvars1, myvars2, myvars3
-
-
-def calculate_ref_MAF(refname):
-    #plink --vcf HRC.r1-1.EGA.GRCh37.chr9.haplotypes.9p21.3.vcf.clean4 --freq 
-
-    result = sp.check_output("plink --vcf "+refname+" --freq --out "+refname, encoding='UTF-8', shell=True)
-
-    read_MAF_file(refname+".frq")
-
-
-
-# In[20]:
-
-def generate_refpos(refname):
-
-    #result = sp.check_output("cut -f1-5 "+inpos+" > "+refname+".pos", encoding='UTF-8', shell=True)
-    #result = sp.check_output("cut -f1-5 "+refname+" > "+refname+".pos", encoding='UTF-8', shell=True)
-    #my_cmd = "cut -f1-5 "+inpos+" > "+refname+".pos"
-    my_cmd = "cut -f1-5 "+refname
-    with open(refname+".pos", "w") as outfile:
-        sp.run(my_cmd, stdout=outfile,  encoding='UTF-8', shell=True)
-
-reffile=sys.argv[1]
-inpos=sys.argv[1]+".pos"
-infile=sys.argv[2]
-imputedfile=sys.argv[3]
-inwgs=sys.argv[4]
-
-generate_refpos(reffile)
-
-#process input file
-input_df = process_data(inpos, infile)
-my_known_indexes = known_indexes
-print("KNOWN INDEXES:", my_known_indexes)
-
-#Process ARIC WGS dataset as our ground truth, mapping its variants to the positions listed in HRC
-new_df_obs = process_data(inpos, inwgs)
-my_wgs_indexes = known_indexes
-
-
-#Process imputed output for ARIC dataset, mapping its variants to the positions listed in HRC
-new_df_imputed = process_data(inpos, imputedfile)
-
-#Create a backup copy of our ground truth datasets
-orig_new_df_obs = np.copy(new_df_obs)
-
-#read_maf_file(freqfile)
-calculate_ref_MAF(reffile)
-
-print("REF MAF:", MAF_all_var)
-
-#convert 3D array to 2D array, necessary for inference and accuracy calculations
-new_df_obs = flatten(new_df_obs.copy())
-
-(new_df_obs.shape)
-
-
-#convert 3D array to 2D array, necessary for inference and accuracy calculations
-new_df_imputed = flatten(new_df_imputed.copy())
-
-(new_df_imputed.shape)
+    if(X_mode!="False"):
+        weights = np.divide(weights,np.sum(weights))
+        weights = np.interp(weights, (weights.min(), weights.max()), (0.0, 1.0))
+        top = np.multiply(np.add(weights,1.0), top)
+        bottom = np.add(np.multiply(weights,precision), recall)
+        w_macro_f1 = np.divide(top,bottom)
+        w_macro_f1 = np.round(w_macro_f1, decimals=3)
+    macro_f1 = np.round(macro_f1, decimals=3)
 
 
 
+    CPT=np.zeros(len(results[chunk_i][ai]['correct_pred_per_sample']))
+    #variant count
+    CNT=0
+
+    xy_per_sample=np.zeros(len(results[chunk_i][ai]['xy_per_sample']))
+
+    for chunk_i in range(ci):
+        for si in list(range(len(results[chunk_i])))[0::ni]:
+            CPT=np.add(CPT, results[chunk_i][si+ai]['correct_pred_per_sample'])
+            xy_per_sample=np.add(xy_per_sample, results[chunk_i][si+ai]['xy_per_sample'])
+            results[chunk_i][si+ai]['correct_pred_per_sample'] = 0
+            CNT+=results[chunk_i][si+ai]['N']
+
+    #print('results', len(results[chunk_i][1]['correct_pred_per_sample']) )
+    #print('CPT', CPT, len(CPT))
+    #print('CNT', CNT)
+    #print('chunks', ci)
+
+    accuracy_per_sample=np.divide(CPT,CNT)
+    accuracy_per_sample=np.round(accuracy_per_sample, decimals=3)
+    P0_per_sample=np.divide(xy_per_sample,CNT)
+    P0_per_sample=np.round(P0_per_sample, decimals=3)
+
+
+    digits = len(str(len(P0_per_sample)))+1
+    imp_mafs=np.round(np.asfarray(imp_mafs,float), decimals=digits)
+    if(REF_file!=""):
+        ref_mafs=np.round(np.asfarray(ref_mafs,float), decimals=digits)
+    wgs_mafs=np.round(np.asfarray(wgs_mafs,float), decimals=digits)
+
+    CPT=0
+    xy_per_sample=0
+    #print('accuracy_per_sample', accuracy_per_sample, len(accuracy_per_sample))
+
+    eps = 1e-8
+    chunk_i=0
+
+    TP = np.zeros(len(results[chunk_i][si+fi]['TP']))
+    FP = np.zeros(len(results[chunk_i][si+fi]['FP']))
+    FN = np.zeros(len(results[chunk_i][si+fi]['FN']))
+    N = 0
+
+    for chunk_i in range(ci):
+        for si in list(range(len(results[chunk_i])))[0::ni]:
+            TP=np.add(TP,results[chunk_i][si+fi]['TP'])
+            results[chunk_i][si+fi]['TP'] = 0
+            FP=np.add(FP,results[chunk_i][si+fi]['FP'])
+            results[chunk_i][si+fi]['FP'] = 0
+            FN=np.add(FN,results[chunk_i][si+fi]['FN'])
+            results[chunk_i][si+fi]['FN'] = 0
+            N+=results[chunk_i][si+fi]['N']
+
+    TP = np.add(TP, eps)
+    precision = np.divide(TP, np.add(TP, FP))
+    recall = np.divide(TP, np.add(TP, FN))
+    top = np.multiply(precision, recall)
+    bottom = np.add(precision, recall)
+
+    per_sample_f1 = np.multiply(2.0, np.divide(top,bottom))
+    per_sample_f1 = np.round(per_sample_f1, decimals=3)
+
+    TP = 0
+    FP = 0
+    FN = 0
+
+    #print('per_sample_f1', per_sample_f1, len(per_sample_f1))
+
+    #results['x_sum']=x_sum
+    #results['y_sum']=y_sum
+    #results['xy_sum']=xy_sum
+    #results['x_squared_sum']=x_squared_sum
+    #results['y_squared_sum']=y_squared_sum
+
+    #results['r2_per_variant']=r2_results
+    #results['p_per_variant']=p_results
+
+    chunk_i=0
+
+    x_sum=np.zeros(len(results[chunk_i][si+ri]['x_sum']))
+    y_sum=np.zeros(len(results[chunk_i][si+ri]['y_sum']))
+    xy_sum=np.zeros(len(results[chunk_i][si+ri]['xy_sum']))
+    x_squared_sum=np.zeros(len(results[chunk_i][si+ri]['x_squared_sum']))
+    y_squared_sum=np.zeros(len(results[chunk_i][si+ri]['y_squared_sum']))
+    N=0
+
+    r2_per_variant=[]
+    r2_per_variant_m=[]
+    p_per_variant=[]
+
+    for chunk_i in range(ci):
+        for si in list(range(len(results[chunk_i])))[0::ni]:
+            x_sum=np.add(x_sum,results[chunk_i][si+ri]['x_sum'])
+            results[chunk_i][si+ri]['x_sum']=0
+            y_sum=np.add(y_sum,results[chunk_i][si+ri]['y_sum'])
+            results[chunk_i][si+ri]['y_sum']=0
+            xy_sum=np.add(xy_sum,results[chunk_i][si+ri]['xy_sum'])
+            results[chunk_i][si+ri]['xy_sum']=0
+            x_squared_sum=np.add(x_squared_sum,results[chunk_i][si+ri]['x_squared_sum'])
+            results[chunk_i][si+ri]['x_squared_sum']=0
+            y_squared_sum=np.add(y_squared_sum,results[chunk_i][si+ri]['y_squared_sum'])
+            results[chunk_i][si+ri]['u_squared_sum']=0
+            N+=results[chunk_i][si+ri]['N']
+            #r2_per_variant.extend(results[chunk_i][si+ri]['r2_per_variant_linregress'])
+            #results[chunk_i][si+ri]['r2_per_variant_linregress']=0
+            r2_per_variant_m.extend(results[chunk_i][si+ri]['r2_per_variant_manual'])
+            results[chunk_i][si+ri]['r2_per_variant_manual']=0
+            #p_per_variant.extend(results[chunk_i][si+ri]['p_per_variant'])
+            #results[chunk_i][si+ri]['p_per_variant']=0
+
+    num=np.subtract(np.multiply(xy_sum, N), np.multiply(x_sum, y_sum) )
+    den=np.multiply(x_squared_sum, N)
+    den=np.subtract(den, np.power(x_sum,2))
+    den2=np.multiply(y_squared_sum, N)
+    den2=np.subtract(den2, np.power(y_sum,2))
+    den=np.sqrt(np.multiply(den, den2))
+    r2_per_sample=np.divide(num,den)
+    r2_per_sample=np.power(r2_per_sample,2)
+
+    r2_per_sample=np.round(r2_per_sample, decimals=3)
+    #accuracy_per_var=np.round(accuracy_per_var, decimals=3)
+    r2_per_variant=np.round(r2_per_variant, decimals=3)
+
+    IQS = np.round(IQS, decimals=3)
+    P0_per_var = np.round(P0_per_var, decimals=3)
+
+    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
+
+    labels_s=['imputed_ids','WGS_ids','F-score','concordance_P0','r2']
+    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
+
+    labels_v=[]
+    if(REF_file!=""):
+        merged_results_per_variant=np.column_stack((pos,snp_ids,ref_mafs,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m))
+        labels_v=['position','SNP','REF_MAF','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2']
+    else:
+        merged_results_per_variant=np.column_stack((pos,snp_ids,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m))
+        labels_v=['position','SNP','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2']
+
+    if(X_mode!="False"):
+         merged_results_per_variant=np.column_stack((merged_results_per_variant,accuracy_per_var,w_macro_f1))
+         labels_v.extend(['W_F-score', 'accuracy_ratio'])
+         merged_results_per_sample=np.column_stack((merged_results_per_sample,accuracy_per_sample))
+         labels_s.extend(['accuracy_ratio'])
+
+
+    merged_results_per_variant=np.vstack((np.asarray(labels_v), merged_results_per_variant))
+
+    merged_results_per_sample=np.vstack((np.asarray(labels_s),merged_results_per_sample))
+
+
+    outname=IMPUTED_file.split('.gz')[0]
+    global vout
+    global sout
+
+    if(vout==""):
+        vout=outname+'_per_variant_results.txt'
+    if(sout==""):
+        sout=outname+'_per_sample_results.txt'
+    #np.savetxt(outname+'_per_sample_results.txt', merged_results_per_sample, delimiter="\t")
+    #merged_results_per_sample.tofile(outname+'_per_sample_results.txt', sep='\t', format='%10.5f')
+    #merged_results_per_variant.tofile(outname+'_per_variant_results.txt', sep='\t', format='%10.5f')
+    #np.savetxt(outname+'_per_variant_results.txt', merged_results_per_variant, delimiter="\t")
+    np.savetxt(sout, merged_results_per_sample, fmt="%s", delimiter="\t")
+    np.savetxt(vout, merged_results_per_variant, fmt="%s", delimiter="\t")
+
+    #print('r2_per_sample', r2_per_sample[0:11], len(r2_per_sample))
+    #print('r2_per_variant', r2_per_variant[0:11], len(r2_per_variant))
+    #print('p_per_variant', p_per_variant[0:11], len(p_per_variant))
+
+    merge_stop = timeit.default_timer()
+
+    merge_total = merge_stop-merge_start
+
+    #maf_total = maf_stop-maf_start
+
+    print('1 Read imputed file time: ', read_total)
+
+    print('2 Chunking time: ', chunk_total)
+
+    print('3 Calculation time: ', calc_total)
+
+    print('4 Merging calculations per sample time: ', merge_total)
+
+    #print('5 MAF calculation time: ', maf_total)
+
+    #results = [item for sublist in results for item in sublist]
+
+    print('Results per sample at:', sout)
+    print('Results per variant at:', vout)
+
+    return results
+
+
+'''
+my_ncores=mp.cpu_count()
 start = timeit.default_timer()
-
-print("\n****\n")
-print(new_df_obs)
-print("\n****\n")
-    
-print("\n****\n")
-print(new_df_imputed)
-
-print("\n****\n")
-    
-
-#set parallel MAF calculation
-do_parallel_MAF = True
-#number of cores
-ncores = multiprocessing.cpu_count() #for parallel processing
-#set one index per variant
-
-#Map calculated MAF values to the ones present in the ground truth dataset (WGS)
-def map_MAFs(MAFs, mapped_indexes):
-    i=0
-    j=0
-    new_MAFs = []
-    while i < len(MAFs):
-        if(j in mapped_indexes):
-            new_MAFs.append(MAFs[i])
-        i += 1
-        j += 2
-    return new_MAFs
-
-
-
-
-print("Calculating accuracy for predictions...")
-
-#-1 MAF means that this variant was part of input data, will be ignored for accuracy calc.
-my_MAF_all_var = MAF_all_var
-print("###########KNOWN INDEXES:", my_known_indexes)
-
-for i in my_known_indexes:
-    my_MAF_all_var[i] = -1
-
-for i in range(len(my_MAF_all_var)):
-    if(i not in my_wgs_indexes):
-        my_MAF_all_var[i] = -1
-
-accuracy_imputed, am4v, standard_err = accuracy_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=1, categorical=False)
-accuracy_imputed_lowMAF, _, standard_err_low = accuracy_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=0.005, categorical=False)
-accuracy_imputed_highMAF, _, standard_err_high = accuracy_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0.005, threshold2=1, categorical=False)
-
-r2_imputed, r2_standard_err, r2s = r2_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=1, categorical=False)
-r2_imputed_lowMAF, r2_standard_err_low, _ = r2_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=0.005, categorical=False)
-r2_imputed_highMAF, r2_standard_err_high, _ = r2_maf_threshold(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0.005, threshold2=1, categorical=False)
-
-f1s_full = f1_score(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=1, categorical=False)
-f1s_lowMAF = f1_score(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0, threshold2=0.005, categorical=False)
-f1s_highMAF = f1_score(new_df_imputed, new_df_obs, my_MAF_all_var, threshold1=0.005, threshold2=1, categorical=False)
-
-
-
+load_file(my_ncores)
 stop = timeit.default_timer()
+print('Time to load the data by line (sec), numpy chunking, using ', my_ncores, 'cores: ', stop - start)
+'''
 
-print('Time to calculate MAF and accuracy (sec): ', stop - start)
+def main():
 
-print("accuracy per variant")
-print(am4v)
-print("MAF per variant")
-print(my_MAF_all_var)
+    global GA_file
+    global WGS_file
+    global IMPUTED_file
+    global REF_file
+    global max_total_rows
+    global n_max
+    global n_min
+    global sout
+    global vout
+    global X_mode
 
-print("r2 per sample")
-print(r2s)
+    parser = argparse.ArgumentParser(usage='%(prog)s --ga <input_genotype_array.vcf.gz> --imputed <imputed_file.vcf.gz> --wgs <whole_genome_file.vcf.gz>\nUse -h or --help to display help.')
+    parser.add_argument('--ga', dest='ga', type=str, required=True, nargs=1, help='path to genotype array file in vcf.gz format, with tbi')
+    parser.add_argument('--wgs', dest='wgs', type=str, required=True, nargs=1, help='path to whole genome file in vcf.gz format, with tbi')
+    parser.add_argument('--imputed', dest='imputed', type=str, required=True, nargs=1, help='path to imputed file in vcf.gz format, with tbi')
+    parser.add_argument('--ref', dest='ref', default="", type=str, required=False, nargs=1, help='optional, path to reference panel file in vcf.gz format, with tbi. Used for MAF calculation. WGS file will be used if no reference file is provided.')
+    parser.add_argument('--max_total_rows', dest='max_total_rows', default=max_total_rows, type=int, required=False, nargs=1, help='maximun number of rows or variants to be loaded simultaneously, summing all chunks loaded by all cores')
+    parser.add_argument('--max_per_core', dest='max_per_core', default=n_max, type=int, required=False, nargs=1, help='maximun number of variants per chunk per core, lower it to avoid RAM overload')
+    parser.add_argument('--min_per_core', dest='min_per_core', default=n_min, type=int, required=False, nargs=1, help='minimun number of variants per chunk per core, increase to avoid interprocess communication overload')
+    parser.add_argument('--sout', dest='sout', default="", type=str, required=False, nargs=1, help='optional output file path/name per sample, default is the same as the imputed file with _per_sample_results.txt suffix')
+    parser.add_argument('--vout', dest='vout', default="", type=str, required=False, nargs=1, help='optional output file path/name per variant, default is the same as the imputed file with _per_variant_results.txt suffix')
+    parser.add_argument('--xmode', dest='xmode', default="False", type=str, required=False, nargs=1, help='Option for developers, print additional scores.')
 
-print("LABEL: acc_0-1", "acc_0-0.005", "acc_0.005-1")
-print("ACC_RESULT:", accuracy_imputed, accuracy_imputed_lowMAF, accuracy_imputed_highMAF)
-print("ACC_RESULT_STDERR:", standard_err, standard_err_low, standard_err_high)
+    try:
+        args = parser.parse_args()
+    except:
+        #parser.print_help()
+        sys.exit(0)
 
-print("LABEL: F1_0-1", "F1_0-0.005", "F1_0.005-1")
+    print(args)
 
-print("F1_RESULT:", f1s_full[0], f1s_lowMAF[0], f1s_highMAF[0])
-print("F1_RESULT_STDERR:", f1s_full[3], f1s_lowMAF[3], f1s_highMAF[3])
+    GA_file = args.ga[0]
+    WGS_file = args.wgs[0]
+    IMPUTED_file = args.imputed[0]
 
-print("F1_RESULT_MICRO:", f1s_full[1], f1s_lowMAF[1], f1s_highMAF[1])
-print("F1_RESULT_MICRO_STDERR:", f1s_full[4], f1s_lowMAF[4], f1s_highMAF[4])
+    if(args.max_total_rows!=max_total_rows):
+        max_total_rows = args.max_total_rows[0]
+    if(args.max_per_core!=n_max):
+        n_max = args.max_per_core[0]
+    if(args.min_per_core!=n_min):
+        n_min = args.min_per_core[0]
+    if(args.sout!=""):
+        sout = args.sout[0]
+    if(args.vout!=""):
+        vout = args.vout[0]
+    if(args.ref!=""):
+        REF_file = args.ref[0]
+    if(args.xmode!='False'):
+        X_mode = args.xmode[0]
 
-print("F1_RESULT_MACRO:", f1s_full[2], f1s_lowMAF[2], f1s_highMAF[2])
-print("F1_RESULT_MACRO_STDERR:", f1s_full[5], f1s_lowMAF[5], f1s_highMAF[5])
+    print(max_total_rows, n_max, n_min)
 
 
-print("LABEL: r2_0-1", "r2_0-0.005", "r2_0.005-1")
-print("R2_RESULT:", r2_imputed, r2_imputed_lowMAF, r2_imputed_highMAF)
-print("R2_RESULT_STDERR:", r2_standard_err, r2_standard_err_low, r2_standard_err_high)
+    start = timeit.default_timer()
+    my_ncores=mp.cpu_count()
+    results = load_file_chunks(my_ncores)
+    stop = timeit.default_timer()
+
+    print('Total run time (sec):', stop - start)
+
+#    for result in results:
+#        print(result)
+
+
+main()

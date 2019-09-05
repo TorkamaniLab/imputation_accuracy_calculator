@@ -19,62 +19,103 @@ All files provided must be in vcf format, uncompressed, positions and alleles mu
 
 ## How to run:
 ```
-python3.6 Compare_imputation_to_WGS.py ref_file input_file imputed_file WGS_file > accuracy_result.txt
+python3 Compare_imputation_to_WGS.py -h
+usage: Compare_imputation_to_WGS.py --ga <input_genotype_array.vcf.gz> --imputed <imputed_file.vcf.gz> --wgs <whole_genome_file.vcf.gz>
+Use -h or --help to display help.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --ga GA               path to genotype array file in vcf.gz format, with tbi
+  --wgs WGS             path to whole genome file in vcf.gz format, with tbi
+  --imputed IMPUTED     path to imputed file in vcf.gz format, with tbi
+  --ref REF             optional, path to reference panel file in vcf.gz
+                        format, with tbi. Used for MAF calculation. WGS file
+                        will be used if no reference file is provided.
+  --max_total_rows MAX_TOTAL_ROWS
+                        maximun number of rows or variants to be loaded
+                        simultaneously, summing all chunks loaded by all cores
+  --max_per_core MAX_PER_CORE
+                        maximun number of variants per chunk per core, lower
+                        it to avoid RAM overload
+  --min_per_core MIN_PER_CORE
+                        minimun number of variants per chunk per core,
+                        increase to avoid interprocess communication overload
+  --sout SOUT           optional output file path/name per sample, default is
+                        the same as the imputed file with
+                        _per_sample_results.txt suffix
+  --vout VOUT           optional output file path/name per variant, default is
+                        the same as the imputed file with
+                        _per_variant_results.txt suffix
 ```
 
 A detailed report with accuracy ratio, F1 score, Pearson correlation (r2) is generated and wrote to the output file (i.e accuracy_result.txt)
 
-## Example for ARIC dataset using Minimac4, 9p21.3 region only:
+## Example:
 ```
-python3.6 Compare_imputation_to_WGS.py \
-HRC.r1-1.EGA.GRCh37.chr9.haplotypes.9p21.3.vcf.clean4 \
-ARIC_PLINK_flagged_chromosomal_abnormalities_zeroed_out_bed.lifted_NCBI36_to_GRCh37.GH.ancestry-1.chr9_intersect1.vcf.gz.9p21.3.recode.vcf \
-imputed_9_intersect1.dose.9p21.3.vcf \
-c1_ARIC_WGS_Freeze3.lifted_already_GRCh37_intersect1.vcf.gz.9p21.3.recode.vcf \
-> accuracy_ARIC_minimac4.txt
+python3.6 Compare_imputation_to_WGS.py --ga aric_GT_ancestry-5_cad_190625.vcf.chr1.gz --imputed aric_intersectWGS_rpt-1_ancestry-5_phasing-eagle_seed-E_imputed-HRC_cad_190625.vcf.chr1.gz --wgs aric_WGS_ancestry-5_cad_190625.recode.vcf.chr1.gz
 ```
 
 ## Results:
 
-The accuracy metrics are split by MAF thresholds: full dataset, MAF<0.005, MAF>0.005. They can be extracted easily:
 ```
-tail -n 13 accuracy_ARIC_minimac4.txt
-```
+Processing  239 imputed samples
+Processing chunk: 1 Max rows per chunk: 10000
+1 Read imputed file time:  0.0004201233386993408
+2 Chunking time:  8.239876478910446e-06
+3 Calculation time:  0.16841873712837696
+4 Merging calculations per sample time:  0.0037479093298316
+Results per sample at: aric_intersectWGS_rpt-1_ancestry-5_phasing-eagle_seed-E_imputed-HRC_cad_190625.vcf.chr1_per_sample_results.txt
+Results per variant at: aric_intersectWGS_rpt-1_ancestry-5_phasing-eagle_seed-E_imputed-HRC_cad_190625.vcf.chr1_per_variant_results.txt
+Total run time (sec): 0.17389075085520744
 
-The results will be displayed as the example bellow: 
-```
-LABEL: acc_0-1 acc_0-0.005 acc_0.005-1
-ACC_RESULT: 0.9564710679945054 0.9978051518374098 0.8466405023547883
-ACC_RESULT_STDERR: 0.003999562406265492 0.0010794785390533794 0.012592857010616916
-LABEL: F1_0-1 F1_0-0.005 F1_0.005-1
-F1_RESULT: 0.961353586638197 0.998362734174821 0.8772014118603704
-F1_RESULT_STDERR: 0.0 0.0 0.0
-F1_RESULT_MICRO: 0.8062435549490555 0.8157781916861591 0.7809086630476098
-F1_RESULT_MICRO_STDERR: 0.36839909745187904 0.3867015575778903 0.3132287255888532
-F1_RESULT_MACRO: 0.9590986936591761 0.9967534702651305 0.8735426739758072
-F1_RESULT_MACRO_STDERR: 0.0007125480730197961 0.001073935051745486 0.002014179072566615
-LABEL: r2_0-1 r2_0-0.005 r2_0.005-1
-R2_RESULT: 0.9206789637146933 0.9972854432692814 0.699405645114335
-R2_RESULT_STDERR: 0.0015275731841606893 2.4734013322507845e-05 0.005542140635649253
 ```
 
-The results can be interpreted as follows:
-
-- ACC_RESULT: accuracy ratio, number of correct predictions divided by total number of predictions
-- ACC_RESULT_STDERR: standard error of accuracy ratio acrross all variants
-- F1_RESULT: overall F1 score across all genotypes
-- F1_RESULT_STDERR: standard error cannot be calculated for overall F1 score
-- F1_RESULT_MICRO: micro F1 score, averaged accross all samples
-- F1_RESULT_MICRO_STDERR: standard error of the micro F1 score
-- F1_RESULT_MACRO: macro F1 score, averaged accross all features
-- F1_RESULT_MACRO_STDERR:  standard error of the macro F1 score
-- R2_RESULT: mean Pearson r squared per sample
-- R2_RESULT_STDERR: standard error of the Pearson r squared
-
-
-You can extract a specific metrix from the resul file using grep:
+The results will be displayed as the example bellow (per variant):
 ```
-grep "R2_RESULT:" accuracy_*.txt > r2_result.txt
-grep "R2_RESULT_" accuracy_*.txt > r2_stderr_result.txt
+position        SNP     IMPUTED_MAF     WGS_MAF F-score concordance_P0  IQS     r2
+1:38461319      1:38461319      0.2573  0.2615  0.896   0.715   0.478   0.38
+1:56962821      1:56962821      0.159   0.1548  0.974   0.933   0.843   0.801
+1:230845794     1:230845794     0.1381  0.1318  0.995   0.987   0.967   0.954
+1:115753482     1:115753482     0.0397  0.0397  1.0     1.0     1.0     1.0
+1:154422067     1:154422067     0.2782  0.2803  0.998   0.996   0.993   0.987
+1:151762308     1:151762308     0.4895  0.4854  0.997   0.992   0.986   0.988
+1:2252205       1:2252205       0.0084  0.0042  0.996   0.992   0.663   0.462
+1:3325912       1:3325912       0.1381  0.1318  0.94    0.849   0.617   0.452
+1:210468999     1:210468999     0.0084  0.0084  1.0     1.0     1.0     1.0
 ```
 
+Results per sample:
+```
+imputed_ids     WGS_ids F-score concordance_P0  r2
+0_326990        A00163_A00163   1.0     1.0     0.955
+460_124582      A00250_A00250   0.957   0.889   0.856
+0_120579        A00272_A00272   0.947   0.889   0.948
+612_546283      A00412_A00412   0.957   0.889   0.709
+0_116067        A00636_A00636   0.957   0.889   0.886
+478_526103      A00796_A00796   1.0     1.0     0.971
+690_433317      A00812_A00812   0.957   0.889   0.868
+0_354504        A00948_A00948   0.9     0.778   0.905
+0_530012        A00990_A00990   0.963   0.889   0.791
+0_206281        A01096_A01096   1.0     1.0     0.995
+612_277150      A01125_A01125   0.96    0.889   0.694
+```
+
+The results can be interpreted as follows.
+
+Metrics per variant:
+- REF_MAF: Reference Panel MAF (if reference panel is provided)
+- IMPUTED_MAF: Imputed MAF
+- WGS_MAF: Whole Genome MAF
+- F-score: macro F-score (not weighted),
+- concordance_P0: accuracy ratio (concordance, from the article cited bellow [1]),
+- IQS: imputation quality score (from the same article [1])
+- r2: r-squared
+
+Metrics per sample:
+- F-core: F-score per sample
+- concordance_P0: accuracy ratio
+- r2: r-squared
+
+## References:
+
+[1] Ramnarine S, Zhang J, Chen LS, Culverhouse R, Duan W, Hancock DB, Hartz SM, Johnson EO, Olfson E, Schwantes-An TH, Saccone NL. When does choice of accuracy measure alter imputation accuracy assessments?. PloS one. 2015 Oct 12;10(10):e0137601.
