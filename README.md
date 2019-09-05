@@ -4,26 +4,29 @@ Documentation and scripts provided for calculating imputation accuracy. Tested u
 
 ## Requirements
 
-- plink v1.9: used to calculate MAFs
+- samtools/bcftools: used to calculate MAFs
 - python v3: source code was implemented and tested on python 3.6
 
-## Command line arguments are:
+## Required command line arguments are:
 
-- ref_file: reference panel used for imputation
-- input file: genotype array file used as input for imputation
-- imputed_file: imputation results
-- WGS_file: ground truth file, containing experimentally determined genotypes (i.e. Whole Genome Sequencing data)
-- accuracy_result.txt: name for the output file, can be any name by user's choice
+The following inputs, in vcf.gz format, including its respective tabix tbi file, are required to run.
+
+- ga: genotype array file used as input for imputation
+- imputed: imputation results
+- wgs: ground truth file, containing experimentally determined genotypes (i.e. Whole Genome Sequencing data)
 
 All files provided must be in vcf format, uncompressed, positions and alleles must match. In other words: NO SWAPS, NO FLIPS, SAME BUILD!!! It is not necessary to provide allele frequencies, since the tool will calculate it internally using plink v1.9.
 
-## How to run:
+## Usage:
+
+The help shows all the required arguments listed above, plus optional arguments.
+
 ```
 python3 Compare_imputation_to_WGS.py -h
 usage: Compare_imputation_to_WGS.py --ga <input_genotype_array.vcf.gz> --imputed <imputed_file.vcf.gz> --wgs <whole_genome_file.vcf.gz>
 Use -h or --help to display help.
 
-optional arguments:
+arguments:
   -h, --help            show this help message and exit
   --ga GA               path to genotype array file in vcf.gz format, with tbi
   --wgs WGS             path to whole genome file in vcf.gz format, with tbi
@@ -50,7 +53,7 @@ optional arguments:
 
 A detailed report with accuracy ratio, F1 score, Pearson correlation (r2) is generated and wrote to the output file (i.e accuracy_result.txt)
 
-## Example:
+## How to run example:
 ```
 python3.6 Compare_imputation_to_WGS.py --ga aric_GT_ancestry-5_cad_190625.vcf.chr1.gz --imputed aric_intersectWGS_rpt-1_ancestry-5_phasing-eagle_seed-E_imputed-HRC_cad_190625.vcf.chr1.gz --wgs aric_WGS_ancestry-5_cad_190625.recode.vcf.chr1.gz
 ```
