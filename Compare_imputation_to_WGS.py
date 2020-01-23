@@ -10,6 +10,7 @@ import gzip
 import argparse
 import sys
 
+#Latest update 11/1/2019
 #HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
 
 #split inut data into chunks so we can prepare batches in parallel
@@ -39,6 +40,12 @@ DEBUG=False
 
 vout=""
 sout=""
+
+disable_DS=False
+
+
+if(DEBUG==True):
+    import csv
 
 #new chunk, works on ND arrays instead of taking indexes
 def chunk(data, ncores=mp.cpu_count()):
@@ -92,7 +99,7 @@ def f1_score(x_in, y_in):
 
     dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
 
-    x, y = convert_and_reshape(dose_to_binary, 	x_in, y_in)
+    x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
     #x=x.flatten()
     #y=y.flatten()
 
@@ -277,9 +284,13 @@ def pearson_r2(x_in, y_in):
         p_results.append(np.round(p, decimals=3))
     '''
 
-    x = np.asarray(list(x_in.values()), dtype=float)
-    y = np.asarray(list(y_in.values()), dtype=float)
-
+    #x = np.asarray(list(x_in.values()), dtype=float)
+    #y = np.asarray(list(y_in.values()), dtype=float)
+    x = np.copy(x_in)
+    y = np.copy(y_in)
+    if(DEBUG==True):
+        np.savetxt("x_before", x)    
+        np.savetxt("y_before", y)    
 
     #per variant
     x_sum = np.sum(x, axis=1)
@@ -308,7 +319,8 @@ def pearson_r2(x_in, y_in):
     #per sample
     x_sum = np.sum(x, axis=0)
     y_sum = np.sum(y, axis=0)
-    xy_sum = np.sum(np.multiply(x,y), axis=0)
+    xy=np.multiply(x,y)
+    xy_sum = np.sum(xy, axis=0)
     x_squared_sum = np.sum(np.power(x,2), axis=0)
     y_squared_sum = np.sum(np.power(y,2), axis=0)
 
@@ -322,6 +334,11 @@ def pearson_r2(x_in, y_in):
     results['x_squared_sum']=x_squared_sum
     results['y_squared_sum']=y_squared_sum
 
+       
+    if(DEBUG==True):
+        results['xy']=xy
+        np.savetxt("x_after", x)    
+        np.savetxt("y_after", y) 
     #results['mean_x_per_sample']=mean_x
     #results['mean_y_per_sample']=mean_y
     #results['var_y_per_sample']=var_y
@@ -407,7 +424,7 @@ def convert_gt_to_int(gt):
 
     return result
 
-def extract_dose_from_line(vcf_line):
+def extract_dose_from_line(vcf_line, disable_DS=False):
 
     vcf_line=vcf_line.split('\t')
 
@@ -420,7 +437,7 @@ def extract_dose_from_line(vcf_line):
     snp_id=vcf_line[2]
 
     for column in vcf_line[9:]:
-        if(':' in column):
+        if(':' in column and disable_DS==False):
             gen_dose=column.split(':')
             result=gen_dose[1]
             result=float(result)
@@ -531,6 +548,9 @@ def process_lines(lines):
     ga_pos = extract_ga_positions(coordinates)
     wgs_lines = extract_vcf_lines(coordinates)
 
+    if(wgs_lines==False):
+        return [False]
+
     for line in wgs_lines:
         pos_dosages_tmp, snp = extract_dose_from_line(line)
         wgs_dosages[pos_dosages_tmp[0]] = pos_dosages_tmp[1:]
@@ -548,6 +568,10 @@ def process_lines(lines):
 
     imputed_dosages, wgs_dosages = intersect_positions(imputed_dosages, wgs_dosages)
     snp_ids, wgs_dosages = intersect_positions(snp_ids, wgs_dosages)
+
+    if(len(imputed_dosages)==0 or len(wgs_dosages)==0):
+        #print(ga_pos)
+        return [False]
 
     maf_dict={}
     wgs_maf_dict={}
@@ -569,10 +593,23 @@ def process_lines(lines):
 
     #for pos in imputed_dosages:
     #    if(pos in wgs_dosages):
+    
+    #sort everything
+    imputed_dosages = dict(sorted(imputed_dosages.items()))
+    wgs_dosages = dict(sorted(wgs_dosages.items()))
+    
     f1_dict = f1_score(list(imputed_dosages.values()), list(wgs_dosages.values()))
     acc_dict = accuracy_ratio(list(imputed_dosages.values()), list(wgs_dosages.values()))
-    r2_dict = pearson_r2(imputed_dosages, wgs_dosages)
+    r2_dict = pearson_r2(list(imputed_dosages.values()), list(wgs_dosages.values()))
 
+    if(DEBUG==True):
+        w = csv.writer(open("imputed_dosages.csv", "w"))
+        for key, val in imputed_dosages.items():
+            w.writerow([key, val])
+        w = csv.writer(open("wgs_dosages.csv", "w"))
+        for key, val in wgs_dosages.items():
+            w.writerow([key, val])     
+       
     #acc_dict['accuracy_per_var']
     #acc_dict['correct_pred_per_sample']
     #acc_dict['N']
@@ -640,7 +677,7 @@ def load_file_chunks(ncores):
             chunk_total += chunk_stop-chunk_start
 
             calc_start = timeit.default_timer()
-
+            
             pool = mp.Pool(ncores)
             results_tmp = pool.map(process_lines,data)
             pool.close()
@@ -651,7 +688,10 @@ def load_file_chunks(ncores):
             if(len(results_tmp)>0):
                 results.append(results_tmp)
                 ci+=1
-
+            if(DEBUG!=False):
+                print("RESULT length: ", len(results_tmp), "ci:", ci)
+                print("RESULT 0: ", len(results_tmp[0]), "ci:", ci)
+                print("results_tmp", results_tmp)
             calc_stop = timeit.default_timer()
             calc_total += calc_stop-calc_start
 
@@ -814,11 +854,17 @@ def load_file_chunks(ncores):
 
     eps = 1e-8
     chunk_i=0
+    si=0
 
+    if(DEBUG!=False):
+        print("chunk_i", chunk_i, "si", si, "fi" , fi)
+        print("len(results[chunk_i])", len(results[chunk_i]))
+        print("len(results[chunk_i][si+fi])", len(results[chunk_i][si+fi]) )        
+
+    N = 0
     TP = np.zeros(len(results[chunk_i][si+fi]['TP']))
     FP = np.zeros(len(results[chunk_i][si+fi]['FP']))
     FN = np.zeros(len(results[chunk_i][si+fi]['FN']))
-    N = 0
 
     for chunk_i in range(ci):
         for si in list(range(len(results[chunk_i])))[0::ni]:
@@ -855,6 +901,7 @@ def load_file_chunks(ncores):
     #results['p_per_variant']=p_results
 
     chunk_i=0
+    si=0
 
     x_sum=np.zeros(len(results[chunk_i][si+ri]['x_sum']))
     y_sum=np.zeros(len(results[chunk_i][si+ri]['y_sum']))
@@ -866,13 +913,19 @@ def load_file_chunks(ncores):
     r2_per_variant=[]
     r2_per_variant_m=[]
     p_per_variant=[]
-
     for chunk_i in range(ci):
         for si in list(range(len(results[chunk_i])))[0::ni]:
             x_sum=np.add(x_sum,results[chunk_i][si+ri]['x_sum'])
             results[chunk_i][si+ri]['x_sum']=0
             y_sum=np.add(y_sum,results[chunk_i][si+ri]['y_sum'])
             results[chunk_i][si+ri]['y_sum']=0
+            if(DEBUG==True):
+                #print(np.savetxt(sys.stdout, results[chunk_i][si+ri]['xy']))
+                print(np.savetxt("xy", results[chunk_i][si+ri]['xy']))
+
+                print("DEBUG r2: cumulative xy_sum", xy_sum, "original", results[chunk_i][si+ri]['xy_sum'])
+                print("DEBUG r2: xy_sum", results[chunk_i][si+ri]['xy_sum'], "len(xy_sum)", len(results[chunk_i][si+ri]['xy_sum']))
+                print("DEBUG r2: xy", results[chunk_i][si+ri]['xy'], "len(xy)", len(results[chunk_i][si+ri]['xy']))
             xy_sum=np.add(xy_sum,results[chunk_i][si+ri]['xy_sum'])
             results[chunk_i][si+ri]['xy_sum']=0
             x_squared_sum=np.add(x_squared_sum,results[chunk_i][si+ri]['x_squared_sum'])
@@ -887,6 +940,7 @@ def load_file_chunks(ncores):
             #p_per_variant.extend(results[chunk_i][si+ri]['p_per_variant'])
             #results[chunk_i][si+ri]['p_per_variant']=0
 
+#np.subtract(np.multiply(xy_sum, N), np.multiply(x_sum, y_sum) )
     num=np.subtract(np.multiply(xy_sum, N), np.multiply(x_sum, y_sum) )
     den=np.multiply(x_squared_sum, N)
     den=np.subtract(den, np.power(x_sum,2))
@@ -895,6 +949,9 @@ def load_file_chunks(ncores):
     den=np.sqrt(np.multiply(den, den2))
     r2_per_sample=np.divide(num,den)
     r2_per_sample=np.power(r2_per_sample,2)
+    if(DEBUG==True):
+        print("DEBUG r2: num", num,"xy_sum", xy_sum, "N", N, "x_squared_sum", x_squared_sum,"x_sum",x_sum, "den", den,"den2", den2, "r2_per_sample", r2_per_sample)
+        
 
     r2_per_sample=np.round(r2_per_sample, decimals=3)
     #accuracy_per_var=np.round(accuracy_per_var, decimals=3)
