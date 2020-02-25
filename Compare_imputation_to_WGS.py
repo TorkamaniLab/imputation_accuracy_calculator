@@ -591,13 +591,6 @@ def process_lines(lines):
 
     imp_maf_dict, snp_ids = intersect_positions(imp_maf_dict, snp_ids)
 
-    #for pos in imputed_dosages:
-    #    if(pos in wgs_dosages):
-    
-    #sort everything
-    imputed_dosages = dict(sorted(imputed_dosages.items()))
-    wgs_dosages = dict(sorted(wgs_dosages.items()))
-    
     f1_dict = f1_score(list(imputed_dosages.values()), list(wgs_dosages.values()))
     acc_dict = accuracy_ratio(list(imputed_dosages.values()), list(wgs_dosages.values()))
     r2_dict = pearson_r2(list(imputed_dosages.values()), list(wgs_dosages.values()))
