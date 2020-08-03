@@ -43,6 +43,8 @@ sout=""
 
 disable_DS=False
 
+#enable just for autoencoder benchmarking purposes
+multimask_mode=False
 
 if(DEBUG==True):
     import csv
@@ -97,9 +99,11 @@ def f1_score(x_in, y_in):
     #go along all axes since this function takes one variant per run, or one sample per run
     #axis: 0 (vertical, per sample), 1 (horizontal, per SNP), None (all, per sample+variant)
 
-    dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
+    #dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
+    dose_to_prob = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
 
-    x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
+    #x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
+    x, y = convert_and_reshape(dose_to_prob, x_in, y_in)
     #x=x.flatten()
     #y=y.flatten()
 
@@ -107,12 +111,25 @@ def f1_score(x_in, y_in):
 
     for axis in [0,1]:
 
-        TP = np.count_nonzero(np.multiply(x, y), axis=axis)
-        FP = np.count_nonzero(np.multiply(x, np.subtract(y,1.0)), axis=axis)
-        FN = np.count_nonzero(np.multiply(np.subtract(x,1.0),y), axis=axis)
+        #TP = np.count_nonzero(np.multiply(x, y), axis=axis)
+        #FP = np.count_nonzero(np.multiply(x, np.subtract(y,1.0)), axis=axis)
+        #FN = np.count_nonzero(np.multiply(np.subtract(x,1.0),y), axis=axis)
 
-        #go ahead and calculate macro F-score if on orizontal axis
+        # True Positive (TP): we predict a label of 1 (positive), and the true label is 1.       
+        TP = np.sum(np.logical_and(x == 1, y == 1), axis=axis)
+ 
+        # True Negative (TN): we predict a label of 0 (negative), and the true label is 0.
+        TN = np.sum(np.logical_and(x == 0, y == 0), axis=axis)
+ 
+        # False Positive (FP): we predict a label of 1 (positive), but the true label is 0.
+        FP = np.sum(np.logical_and(x == 1, y == 0), axis=axis)
+ 
+        # False Negative (FN): we predict a label of 0 (negative), but the true label is 1.
+        FN = np.sum(np.logical_and(x == 0, y == 1),  axis=axis)
+
+        #go ahead and calculate macro F-score if on horizontal axis
         if(axis==1):
+            TP0=TP
             TP = np.add(TP, eps)
             precision = np.divide(TP, np.add(TP, FP))
             recall = np.divide(TP, np.add(TP, FN))
@@ -123,6 +140,16 @@ def f1_score(x_in, y_in):
             macro_f1 = np.multiply(2.0, np.divide(top,bottom))
 
             results['macro_f1']=macro_f1
+            results['var_TPr']=np.round(TP/(TP+FP), decimals=3)
+            results['var_FPr']=np.round(FP/(TP+FP), decimals=3)
+            results['var_FNr']=np.round(FN/(TN+FN), decimals=3)
+            results['var_TNr']=np.round(TN/(TN+FN), decimals=3)
+            results['var_TP']=TP0
+            results['var_FP']=FP
+            results['var_FN']=FN
+            results['var_TN']=TN
+            results['var_precision']=np.round(precision, decimals=3)
+            results['var_recall']=np.round(recall, decimals=3)
 
             if(X_mode!="False"):
                 weights = np.sum(y_in, axis=axis)
@@ -143,20 +170,28 @@ def f1_score(x_in, y_in):
             #macro_f1 = np.round(macro_f1, decimals=3)
 
         else:
-            TP = TP.reshape(int(len(TP)/2),2)
-            FP = FP.reshape(int(len(FP)/2),2)
-            FN = FN.reshape(int(len(FN)/2),2)
+            #TP = TP.reshape(int(len(TP)/2),2)
+            #FP = FP.reshape(int(len(FP)/2),2)
+            #FN = FN.reshape(int(len(FN)/2),2)
+            #TN = TN.reshape(int(len(TN)/2),2)
+            TP = TP.reshape(int(len(TP)/3),3)
+            FP = FP.reshape(int(len(FP)/3),3)
+            FN = FN.reshape(int(len(FN)/3),3)
+            TN = TN.reshape(int(len(TN)/3),3)
             TP = np.sum(TP, axis=1)
             FP = np.sum(FP, axis=1)
             FN = np.sum(FN, axis=1)
+            TN = np.sum(TN, axis=1)
             #true positives per sample
             results['TP']=TP
             #false positives per sample
             results['FP']=FP
             #true negatives per sample
             results['FN']=FN
+            results['TN']=TN
             #sample size
-            results['N']=len(y)*2
+            #results['N']=len(y)*2
+            results['N']=len(y)*3
 
     return results
 
@@ -434,7 +469,7 @@ def extract_dose_from_line(vcf_line, disable_DS=False):
     pos=vcf_line[0]+':'+vcf_line[1]
     result_line.append(pos)
 
-    snp_id=vcf_line[2]
+    snp_id=pos+'_'+vcf_line[3]+'_'+vcf_line[4]
 
     for column in vcf_line[9:]:
         if(':' in column and disable_DS==False):
@@ -551,19 +586,21 @@ def process_lines(lines):
     if(wgs_lines==False):
         return [False]
 
+    print("wgs_lines", len(wgs_lines))
+
     for line in wgs_lines:
         pos_dosages_tmp, snp = extract_dose_from_line(line)
         wgs_dosages[pos_dosages_tmp[0]] = pos_dosages_tmp[1:]
         snp_ids[pos_dosages_tmp[0]]=snp
+    
 
-    if(ga_pos!=False):
+    if(ga_pos!=False and multimask_mode==False):
         remove_positions(ga_pos, imputed_dosages)
 
         if(wgs_lines!=False):
             remove_positions(ga_pos, wgs_dosages)
 
     if(len(imputed_dosages)==0 or len(wgs_dosages)==0):
-        #print(ga_pos)
         return [False]
 
     imputed_dosages, wgs_dosages = intersect_positions(imputed_dosages, wgs_dosages)
@@ -730,6 +767,17 @@ def load_file_chunks(ncores):
     P0_per_var=[]
     IQS=[]
 
+    vTP = []
+    vTN = []
+    vFP = []
+    vFN = []
+    vTPr = []
+    vTNr = []
+    vFPr = []
+    vFNr = []
+    var_precision = []
+    var_recall = []
+
     #positions: index 0
     #f1 result dictionary: index 1
     #accuracy dictionary: 2
@@ -785,6 +833,30 @@ def load_file_chunks(ncores):
             results[chunk_i][si+ai]['IQS'] = 0
             macro_f1.extend(list(results[chunk_i][si+fi]['macro_f1']))
             results[chunk_i][si+fi]['macro_f1'] = 0
+
+            vTP.extend(list(results[chunk_i][si+fi]['var_TP']))
+            results[chunk_i][si+fi]['var_TP'] = 0
+            vTN.extend(list(results[chunk_i][si+fi]['var_TN']))
+            results[chunk_i][si+fi]['var_TN'] = 0
+            vFP.extend(list(results[chunk_i][si+fi]['var_FP']))
+            results[chunk_i][si+fi]['var_FP'] = 0
+            vFN.extend(list(results[chunk_i][si+fi]['var_FN']))
+            results[chunk_i][si+fi]['var_FN'] = 0
+
+            vTPr.extend(list(results[chunk_i][si+fi]['var_TPr']))
+            results[chunk_i][si+fi]['var_TPr'] = 0
+            vTNr.extend(list(results[chunk_i][si+fi]['var_TNr']))
+            results[chunk_i][si+fi]['var_TNr'] = 0
+            vFPr.extend(list(results[chunk_i][si+fi]['var_FPr']))
+            results[chunk_i][si+fi]['var_FPr'] = 0
+            vFNr.extend(list(results[chunk_i][si+fi]['var_FNr']))
+            results[chunk_i][si+fi]['var_FNr'] = 0
+
+            var_precision.extend(list(results[chunk_i][si+fi]['var_precision']))
+            results[chunk_i][si+fi]['var_precision'] = 0
+            var_recall.extend(list(results[chunk_i][si+fi]['var_recall']))
+            results[chunk_i][si+fi]['var_recall'] = 0
+
             if(X_mode!="False"):
                 weights.extend(list(results[chunk_i][si+fi]['weights']))
                 results[chunk_i][si+fi]['weights'] = 0
@@ -858,6 +930,7 @@ def load_file_chunks(ncores):
     TP = np.zeros(len(results[chunk_i][si+fi]['TP']))
     FP = np.zeros(len(results[chunk_i][si+fi]['FP']))
     FN = np.zeros(len(results[chunk_i][si+fi]['FN']))
+    TN = np.zeros(len(results[chunk_i][si+fi]['TN']))
 
     for chunk_i in range(ci):
         for si in list(range(len(results[chunk_i])))[0::ni]:
@@ -867,8 +940,11 @@ def load_file_chunks(ncores):
             results[chunk_i][si+fi]['FP'] = 0
             FN=np.add(FN,results[chunk_i][si+fi]['FN'])
             results[chunk_i][si+fi]['FN'] = 0
+            TN=np.add(TN,results[chunk_i][si+fi]['TN'])
+            results[chunk_i][si+fi]['TN'] = 0
             N+=results[chunk_i][si+fi]['N']
 
+    TP0=TP
     TP = np.add(TP, eps)
     precision = np.divide(TP, np.add(TP, FP))
     recall = np.divide(TP, np.add(TP, FN))
@@ -877,10 +953,28 @@ def load_file_chunks(ncores):
 
     per_sample_f1 = np.multiply(2.0, np.divide(top,bottom))
     per_sample_f1 = np.round(per_sample_f1, decimals=3)
+    
+    sTPr = TP/(TP+FP)
+    sFPr = FP/(TP+FP)
+    sFNr = FN/(TN+FN)
+    sTNr = TN/(TN+FN)
+    sTP = TP0
+    sFP = FP
+    sFN = FN
+    sTN = TN
+
+    sTPr = np.round(sTPr, decimals=3)
+    sTNr = np.round(sTNr, decimals=3)
+    sFPr = np.round(sFPr, decimals=3)
+    sFNr = np.round(sFNr, decimals=3)
+
+    precision = np.round(precision, decimals=3)
+    recall = np.round(recall, decimals=3)
 
     TP = 0
     FP = 0
     FN = 0
+    TN = 0
 
     #print('per_sample_f1', per_sample_f1, len(per_sample_f1))
 
@@ -951,20 +1045,22 @@ def load_file_chunks(ncores):
     r2_per_variant=np.round(r2_per_variant, decimals=3)
 
     IQS = np.round(IQS, decimals=3)
+    IQS = np.nan_to_num(IQS, 0)
+
     P0_per_var = np.round(P0_per_var, decimals=3)
 
-    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
+    #merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
 
-    labels_s=['imputed_ids','WGS_ids','F-score','concordance_P0','r2']
-    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
+    labels_s=['imputed_ids','WGS_ids','F-score','concordance_P0','r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
+    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample, precision, recall, sTP, sTN, sFP, sFN, sTPr, sTNr, sFPr, sFNr,))
 
     labels_v=[]
     if(REF_file!=""):
-        merged_results_per_variant=np.column_stack((pos,snp_ids,ref_mafs,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m))
-        labels_v=['position','SNP','REF_MAF','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2']
+        merged_results_per_variant=np.column_stack((pos,snp_ids,ref_mafs,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr))
+        labels_v=['position','SNP','REF_MAF','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
     else:
-        merged_results_per_variant=np.column_stack((pos,snp_ids,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m))
-        labels_v=['position','SNP','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2']
+        merged_results_per_variant=np.column_stack((pos,snp_ids,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr))
+        labels_v=['position','SNP','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
 
     if(X_mode!="False"):
          merged_results_per_variant=np.column_stack((merged_results_per_variant,accuracy_per_var,w_macro_f1))
