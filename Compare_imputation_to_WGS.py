@@ -10,7 +10,7 @@ import gzip
 import argparse
 import sys
 
-#Latest update 11/1/2019
+#Latest update 08/03/2020
 #HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
 
 #split inut data into chunks so we can prepare batches in parallel
@@ -43,7 +43,7 @@ sout=""
 
 disable_DS=False
 
-#enable just for autoencoder benchmarking purposes
+#just for autoencoder benchmarking purposes
 multimask_mode=False
 
 if(DEBUG==True):
@@ -99,13 +99,11 @@ def f1_score(x_in, y_in):
     #go along all axes since this function takes one variant per run, or one sample per run
     #axis: 0 (vertical, per sample), 1 (horizontal, per SNP), None (all, per sample+variant)
 
-    #dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
-    dose_to_prob = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
+    dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
+    #dose_to_prob = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
 
-    #x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
-    x, y = convert_and_reshape(dose_to_prob, x_in, y_in)
-    #x=x.flatten()
-    #y=y.flatten()
+    x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
+    #x, y = convert_and_reshape(dose_to_prob, x_in, y_in)
 
     results=dict()
 
@@ -170,14 +168,14 @@ def f1_score(x_in, y_in):
             #macro_f1 = np.round(macro_f1, decimals=3)
 
         else:
-            #TP = TP.reshape(int(len(TP)/2),2)
-            #FP = FP.reshape(int(len(FP)/2),2)
-            #FN = FN.reshape(int(len(FN)/2),2)
-            #TN = TN.reshape(int(len(TN)/2),2)
-            TP = TP.reshape(int(len(TP)/3),3)
-            FP = FP.reshape(int(len(FP)/3),3)
-            FN = FN.reshape(int(len(FN)/3),3)
-            TN = TN.reshape(int(len(TN)/3),3)
+            TP = TP.reshape(int(len(TP)/2),2)
+            FP = FP.reshape(int(len(FP)/2),2)
+            FN = FN.reshape(int(len(FN)/2),2)
+            TN = TN.reshape(int(len(TN)/2),2)
+            #TP = TP.reshape(int(len(TP)/3),3)
+            #FP = FP.reshape(int(len(FP)/3),3)
+            #FN = FN.reshape(int(len(FN)/3),3)
+            #TN = TN.reshape(int(len(TN)/3),3)
             TP = np.sum(TP, axis=1)
             FP = np.sum(FP, axis=1)
             FN = np.sum(FN, axis=1)
@@ -190,8 +188,8 @@ def f1_score(x_in, y_in):
             results['FN']=FN
             results['TN']=TN
             #sample size
-            #results['N']=len(y)*2
-            results['N']=len(y)*3
+            results['N']=len(y)*2
+            #results['N']=len(y)*3
 
     return results
 
