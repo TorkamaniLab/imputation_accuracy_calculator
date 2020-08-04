@@ -10,7 +10,7 @@ import gzip
 import argparse
 import sys
 
-#Latest update 08/03/2020
+#Latest update 08/04/2020
 #HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
 
 #split inut data into chunks so we can prepare batches in parallel
@@ -43,7 +43,7 @@ sout=""
 
 disable_DS=False
 
-#just for autoencoder benchmarking purposes
+#enable just for autoencoder benchmarking purposes
 multimask_mode=False
 
 if(DEBUG==True):
@@ -90,6 +90,25 @@ def convert_and_reshape(in_dict, x_in, y_in):
     y_o=y_o.reshape(y_o.shape[0],y_o.shape[1]*l)
 
     return x_o, y_o
+
+def rmse(x, y):
+
+    results=dict()
+
+    #squared error
+    se=np.subtract(x,y)**2
+
+    #root mean squared error per variant
+    var_rmse=np.sqrt(np.mean(se, axis=1))
+    
+    #squared error summmed per sample, average after merging chunks
+    sample_ses=np.sum(se, axis=0)
+
+    results['var_rmse'] = var_rmse
+    results['sample_ses'] = sample_ses
+    results['N'] = len(y)
+
+    return results
 
 def f1_score(x_in, y_in):
 
@@ -281,8 +300,8 @@ def accuracy_ratio(x_in,y_in):
     num = np.add(N1_ij, np.add(N2_ij, N3_ij))
     den = np.power(Ns,2)
 
-    num = np.add(eps,num)
-    den = np.add(eps,den)
+    #num = np.add(eps,num)
+    #den = np.add(eps,den)
 
     Pc = np.divide(num,den)
 
@@ -290,6 +309,7 @@ def accuracy_ratio(x_in,y_in):
     den = np.subtract(1.0,Pc)
 
     IQS = np.divide(num,den)
+    IQS = np.nan_to_num(IQS, 0)
 
     results['accuracy_per_var'] = accuracy
     results['correct_pred_per_sample'] = correct_pred_per_sample
@@ -342,10 +362,12 @@ def pearson_r2(x_in, y_in):
 
     eps=1e-15
 
-    num = np.add(eps,num)
-    den = np.add(eps,den)
+    #fixed bug that would print correl = 1 when WGS_MAF is zero
+    #num = np.add(eps,num)
+    #den = np.add(eps,den)
 
     r2_per_variant=np.divide(num,den)
+    r2_per_variant=np.nan_to_num(r2_per_variant,0)
     r2_per_variant=np.power(r2_per_variant,2)
     r2_per_variant=np.round(r2_per_variant, decimals=3)
 
@@ -584,8 +606,6 @@ def process_lines(lines):
     if(wgs_lines==False):
         return [False]
 
-    print("wgs_lines", len(wgs_lines))
-
     for line in wgs_lines:
         pos_dosages_tmp, snp = extract_dose_from_line(line)
         wgs_dosages[pos_dosages_tmp[0]] = pos_dosages_tmp[1:]
@@ -629,6 +649,7 @@ def process_lines(lines):
     f1_dict = f1_score(list(imputed_dosages.values()), list(wgs_dosages.values()))
     acc_dict = accuracy_ratio(list(imputed_dosages.values()), list(wgs_dosages.values()))
     r2_dict = pearson_r2(list(imputed_dosages.values()), list(wgs_dosages.values()))
+    rmse_dict = rmse(list(imputed_dosages.values()), list(wgs_dosages.values()))
 
     if(DEBUG==True):
         w = csv.writer(open("imputed_dosages.csv", "w"))
@@ -640,7 +661,6 @@ def process_lines(lines):
        
     #acc_dict['accuracy_per_var']
     #acc_dict['correct_pred_per_sample']
-    #acc_dict['N']
 
     #f-score per var
     #f1_dict['macro_f1']
@@ -651,12 +671,11 @@ def process_lines(lines):
     #true negatives per sample
     #f1_dict['FN']
     #sample size per chunk
-    #f1_dict['N']
     #print(snp_ids)
 
 #    return list(imputed_dosages.keys()), f1_dict['macro_f1'], acc_dict['accuracy_per_var'], acc_dict['correct_pred_per_sample'], acc_dict['N'], f1_dict['TP'], f1_dict['FN'], f1_dict['N']
 
-    return list(imputed_dosages.keys()), f1_dict, acc_dict, r2_dict, snp_ids, maf_dict, imp_maf_dict, wgs_maf_dict
+    return list(imputed_dosages.keys()), f1_dict, acc_dict, r2_dict, snp_ids, maf_dict, imp_maf_dict, wgs_maf_dict, rmse_dict
 
 
 def load_file_chunks(ncores):
@@ -775,6 +794,7 @@ def load_file_chunks(ncores):
     vFNr = []
     var_precision = []
     var_recall = []
+    vRMSE = []
 
     #positions: index 0
     #f1 result dictionary: index 1
@@ -792,8 +812,9 @@ def load_file_chunks(ncores):
     mi=5
     mi2=6
     mi3=7
-
-    ni=8
+    msi=8 #rsme index
+    #total number of items per chunk
+    ni=9
 
 
 #    results['accuracy_per_var'] = accuracy
@@ -854,6 +875,8 @@ def load_file_chunks(ncores):
             results[chunk_i][si+fi]['var_precision'] = 0
             var_recall.extend(list(results[chunk_i][si+fi]['var_recall']))
             results[chunk_i][si+fi]['var_recall'] = 0
+            
+            vRMSE.extend(list(results[chunk_i][si+msi]['var_rmse']))
 
             if(X_mode!="False"):
                 weights.extend(list(results[chunk_i][si+fi]['weights']))
@@ -868,7 +891,7 @@ def load_file_chunks(ncores):
     #print('pos',pos[0:11], len(pos))
     #print('accuracy_per_var',accuracy_per_var[0:11], len(accuracy_per_var))
     #print('macro_f1',macro_f1[0:11], len(macro_f1))
-
+    vRMSE=np.round(vRMSE, decimals=3)
 
     if(X_mode!="False"):
         weights = np.divide(weights,np.sum(weights))
@@ -930,6 +953,12 @@ def load_file_chunks(ncores):
     FN = np.zeros(len(results[chunk_i][si+fi]['FN']))
     TN = np.zeros(len(results[chunk_i][si+fi]['TN']))
 
+    ses = np.zeros(len(results[chunk_i][si+msi]['sample_ses']))
+    #results['var_rmse'] = var_rmse
+    #results['sample_ses'] = sample_ses
+    #results['N'] = sample_ses
+    Nses=0
+
     for chunk_i in range(ci):
         for si in list(range(len(results[chunk_i])))[0::ni]:
             TP=np.add(TP,results[chunk_i][si+fi]['TP'])
@@ -941,6 +970,11 @@ def load_file_chunks(ncores):
             TN=np.add(TN,results[chunk_i][si+fi]['TN'])
             results[chunk_i][si+fi]['TN'] = 0
             N+=results[chunk_i][si+fi]['N']
+
+            ses=np.add(ses,results[chunk_i][si+msi]['sample_ses'])
+            results[chunk_i][si+msi]['sample_ses'] = 0
+            Nses+=results[chunk_i][si+msi]['N']
+
 
     TP0=TP
     TP = np.add(TP, eps)
@@ -973,6 +1007,9 @@ def load_file_chunks(ncores):
     FP = 0
     FN = 0
     TN = 0
+
+    sRMSE=np.sqrt(ses/Nses)
+    sRMSE=np.round(sRMSE, decimals=3)
 
     #print('per_sample_f1', per_sample_f1, len(per_sample_f1))
 
@@ -1049,16 +1086,16 @@ def load_file_chunks(ncores):
 
     #merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample))
 
-    labels_s=['imputed_ids','WGS_ids','F-score','concordance_P0','r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
-    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample, precision, recall, sTP, sTN, sFP, sFN, sTPr, sTNr, sFPr, sFNr,))
+    labels_s=['imputed_ids','WGS_ids','F-score','concordance_P0','r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio', 'RMSE']
+    merged_results_per_sample=np.column_stack((imputed_sample_ids,WGS_sample_ids,per_sample_f1,P0_per_sample,r2_per_sample, precision, recall, sTP, sTN, sFP, sFN, sTPr, sTNr, sFPr, sFNr, sRMSE))
 
     labels_v=[]
     if(REF_file!=""):
-        merged_results_per_variant=np.column_stack((pos,snp_ids,ref_mafs,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr))
-        labels_v=['position','SNP','REF_MAF','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
+        merged_results_per_variant=np.column_stack((pos,snp_ids,ref_mafs,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr, vRMSE))
+        labels_v=['position','SNP','REF_MAF','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio', 'RMSE']
     else:
-        merged_results_per_variant=np.column_stack((pos,snp_ids,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr))
-        labels_v=['position','SNP','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio']
+        merged_results_per_variant=np.column_stack((pos,snp_ids,imp_mafs,wgs_mafs,macro_f1,P0_per_var, IQS, r2_per_variant_m, var_precision, var_recall, vTP, vTN, vFP, vFN, vTPr, vTNr, vFPr, vFNr, vRMSE))
+        labels_v=['position','SNP','IMPUTED_MAF','WGS_MAF', 'F-score', 'concordance_P0','IQS', 'r2', 'precision', 'recall', 'TP', 'TN', 'FP', 'FN', 'TP_ratio', 'TN_ratio', 'FP_ratio', 'FN_ratio', 'RMSE']
 
     if(X_mode!="False"):
          merged_results_per_variant=np.column_stack((merged_results_per_variant,accuracy_per_var,w_macro_f1))
