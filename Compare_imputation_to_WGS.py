@@ -30,7 +30,7 @@ n_min=100 #minimun number of variants per chunk per core, avoid interprocess com
 #genotype_array_test.vcf  imputed_test.vcf  ref_test.vcf  WGS_test.vcf
 
 
-GA_file="genotype_array_test.vcf.gz"
+GA_file=""
 WGS_file="WGS_test.vcf.gz"
 IMPUTED_file="imputed_test.vcf.gz"
 REF_file=""
@@ -43,7 +43,7 @@ sout=""
 
 disable_DS=False
 
-#enable just for autoencoder benchmarking purposes
+#just for autoencoder benchmarking purposes
 multimask_mode=False
 
 if(DEBUG==True):
@@ -403,17 +403,6 @@ def pearson_r2(x_in, y_in):
 
     return results
 
-def present_in_GA(chr, pos):
-
-    GA = VCF(GA_file)
-
-    coordinates = str(chr)+':'+pos+'-'+pos
-    result=False
-    for variant in GA(coordinates):
-        result=True
-
-    return result
-
 
 def extract_ga_positions(coordinates):
 
@@ -600,7 +589,11 @@ def process_lines(lines):
 
     coordinates = chr+':'+start_pos+'-'+end_pos
 
-    ga_pos = extract_ga_positions(coordinates)
+    if(multimask_mode==False):
+        ga_pos = extract_ga_positions(coordinates)
+    else:
+        ga_pos = False
+
     wgs_lines = extract_vcf_lines(coordinates)
 
     if(wgs_lines==False):
@@ -1162,7 +1155,6 @@ print('Time to load the data by line (sec), numpy chunking, using ', my_ncores, 
 
 def main():
 
-    global GA_file
     global WGS_file
     global IMPUTED_file
     global REF_file
@@ -1174,7 +1166,7 @@ def main():
     global X_mode
 
     parser = argparse.ArgumentParser(usage='%(prog)s --ga <input_genotype_array.vcf.gz> --imputed <imputed_file.vcf.gz> --wgs <whole_genome_file.vcf.gz>\nUse -h or --help to display help.')
-    parser.add_argument('--ga', dest='ga', type=str, required=True, nargs=1, help='path to genotype array file in vcf.gz format, with tbi')
+    parser.add_argument('--ga', dest='ga', type=str, required=False, default="", nargs=1, help='(optional for low pass) path to genotype array file in vcf.gz format, with tbi')
     parser.add_argument('--wgs', dest='wgs', type=str, required=True, nargs=1, help='path to whole genome file in vcf.gz format, with tbi')
     parser.add_argument('--imputed', dest='imputed', type=str, required=True, nargs=1, help='path to imputed file in vcf.gz format, with tbi')
     parser.add_argument('--ref', dest='ref', default="", type=str, required=False, nargs=1, help='optional, path to reference panel file in vcf.gz format, with tbi. Used for MAF calculation. WGS file will be used if no reference file is provided.')
@@ -1192,8 +1184,14 @@ def main():
         sys.exit(0)
 
     print(args)
+    
+    if(args.ga!=""):
+        global GA_file
+        GA_file = args.ga[0]
+    else:
+        global multimask_mode
+        multimask_mode = True
 
-    GA_file = args.ga[0]
     WGS_file = args.wgs[0]
     IMPUTED_file = args.imputed[0]
 
