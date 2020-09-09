@@ -616,6 +616,7 @@ def process_lines(lines):
 
     imputed_dosages, wgs_dosages = intersect_positions(imputed_dosages, wgs_dosages)
     snp_ids, wgs_dosages = intersect_positions(snp_ids, wgs_dosages)
+    snp_ids, imputed_dosages = intersect_positions(snp_ids, imputed_dosages)
 
     if(len(imputed_dosages)==0 or len(wgs_dosages)==0):
         #print(ga_pos)
