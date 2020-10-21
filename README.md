@@ -15,7 +15,7 @@ The following inputs, in vcf.gz format, including its respective tabix tbi file,
 - imputed: imputation results
 - wgs: ground truth file, containing experimentally determined genotypes (i.e. Whole Genome Sequencing data)
 
-All files provided must be in vcf.gz format (compressed, tabixed). Alleles must match, in other words: NO SWAPS, NO FLIPS, SAME BUILD!!! It is not necessary to provide allele frequencies, since the tool will calculate it internally using bcftools.
+**IMPORTANT PREREQUISITE: All files provided must be in vcf.gz format (compressed, tabixed). Alleles must match, in other words: NO SWAPS, NO FLIPS, SAME BUILD!!! It is not necessary to provide allele frequencies, since the tool will calculate it internally using bcftools.**
 
 ## Usage:
 
