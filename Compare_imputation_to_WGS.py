@@ -1,14 +1,17 @@
-import multiprocessing as mp
-import timeit
-import pandas as pd
-from functools import partial # pool.map with multiple args
-import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
-import numpy as np
-from cyvcf2 import VCF
-#from scipy.stats import linregress #r2
-import gzip
-import argparse
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import sys
+import gzip
+import timeit
+import argparse
+import numpy as np
+import pandas as pd
+from cyvcf2 import VCF
+import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
+import multiprocessing as mp
+from functools import partial # pool.map with multiple args
+#from scipy.stats import linregress #r2
 
 #Latest update 08/04/2020
 #HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
