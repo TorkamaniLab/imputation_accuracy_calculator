@@ -6,6 +6,9 @@ Documentation and scripts provided for calculating imputation accuracy. Tested u
 
 - samtools/bcftools: used to calculate MAFs
 - python v3: source code was implemented and tested on python 3.6
+  - `pandas`
+  - `numpy`
+  - `cyvcf2`
 
 ## Required command line arguments are:
 
