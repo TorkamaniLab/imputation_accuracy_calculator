@@ -1,6 +1,6 @@
 # A tool for calculating imputation accuracy by comparing imputation results to WGS data.
 
-Documentation and scripts provided for calculating imputation accuracy. Tested using Minimac4 and Imputation Autoencoder (vcf format imputed files).
+Documentation and scripts provided for calculating imputation accuracy. Tested using Minimac4, Beagle, Impute5 and our deep learning based imputation tool project (in progress). Should work with any imputed VCF file that has GT or GT+DS format fields.
 
 ## Requirements
 
