@@ -1,17 +1,14 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import sys
-import gzip
-import timeit
-import argparse
-import numpy as np
-import pandas as pd
-from cyvcf2 import VCF
-import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
 import multiprocessing as mp
+import timeit
+import pandas as pd
 from functools import partial # pool.map with multiple args
+import subprocess as sp #run bash commands that are much faster than in python (i.e cut, grep, awk, etc)
+import numpy as np
+from cyvcf2 import VCF
 #from scipy.stats import linregress #r2
+import gzip
+import argparse
+import sys
 
 #Latest update 08/04/2020
 #HRC.r1-1.EGA.GRCh37.chr22.haplotypes.50108709-50351375.vcf.VMV1
@@ -507,7 +504,11 @@ def intersect_positions(dict_1,dict_2):
    subdict_1 = {x: dict_1[x] for x in common_keys if x in dict_1}
    subdict_2 = {x: dict_2[x] for x in common_keys if x in dict_2}
 
-   return subdict_1, subdict_2
+   sorted_subdict_1 = dict(sorted(subdict_1.items(), key=lambda item: item[0]))
+   sorted_subdict_2 = dict(sorted(subdict_2.items(), key=lambda item: item[0]))
+
+   #return subdict_1, subdict_2
+   return sorted_subdict_1, sorted_subdict_2
 
 def calculate_MAF(input_file, coordinates):
     #plink --vcf HRC.r1-1.EGA.GRCh37.chr9.haplotypes.9p21.3.vcf.clean4 --freq
@@ -619,7 +620,7 @@ def process_lines(lines):
 
     imputed_dosages, wgs_dosages = intersect_positions(imputed_dosages, wgs_dosages)
     snp_ids, wgs_dosages = intersect_positions(snp_ids, wgs_dosages)
-    snp_ids, imputed_dosages = intersect_positions(snp_ids, imputed_dosages)
+    snp_ids, imputed_dosages = intersect_positions(snp_ids,imputed_dosages)
 
     if(len(imputed_dosages)==0 or len(wgs_dosages)==0):
         #print(ga_pos)
