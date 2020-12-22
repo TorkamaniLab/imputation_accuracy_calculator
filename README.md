@@ -31,25 +31,25 @@ Use -h or --help to display help.
 
 arguments:
   -h, --help            show this help message and exit
-  --ga GA               path to genotype array file in vcf.gz format, with tbi
-  --wgs WGS             path to whole genome file in vcf.gz format, with tbi
-  --imputed IMPUTED     path to imputed file in vcf.gz format, with tbi
+  --ga GA               optional, path to genotype array file in vcf.gz format, with tbi
+  --wgs WGS             required, path to whole genome file in vcf.gz format, with tbi
+  --imputed IMPUTED     required, path to imputed file in vcf.gz format, with tbi
   --ref REF             optional, path to reference panel file in vcf.gz
                         format, with tbi. Used for MAF calculation. WGS file
                         will be used if no reference file is provided.
   --max_total_rows MAX_TOTAL_ROWS
-                        maximun number of rows or variants to be loaded
+                        optional, maximun number of rows or variants to be loaded
                         simultaneously, summing all chunks loaded by all cores
   --max_per_core MAX_PER_CORE
-                        maximun number of variants per chunk per core, lower
+                        optional, maximun number of variants per chunk per core, lower
                         it to avoid RAM overload
   --min_per_core MIN_PER_CORE
-                        minimun number of variants per chunk per core,
+                        optional, minimun number of variants per chunk per core,
                         increase to avoid interprocess communication overload
-  --sout SOUT           optional output file path/name per sample, default is
+  --sout SOUT           optional, output file path/name per sample, default is
                         the same as the imputed file with
                         _per_sample_results.txt suffix
-  --vout VOUT           optional output file path/name per variant, default is
+  --vout VOUT           optional, output file path/name per variant, default is
                         the same as the imputed file with
                         _per_variant_results.txt suffix
 ```
