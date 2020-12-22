@@ -118,7 +118,7 @@ def f1_score(x_in, y_in):
     #go along all axes since this function takes one variant per run, or one sample per run
     #axis: 0 (vertical, per sample), 1 (horizontal, per SNP), None (all, per sample+variant)
 
-    dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1]}
+    dose_to_binary = {0: [1,0], 1: [1,1], 2: [0,1], -1:[0,0]}
     #dose_to_prob = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
 
     x, y = convert_and_reshape(dose_to_binary, x_in, y_in)
@@ -221,7 +221,7 @@ def accuracy_ratio(x_in,y_in):
 
     eps=1e-15
 
-    dose_to_probability = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1]}
+    dose_to_probability = {0: [1,0,0], 1: [0,1,0], 2: [0,0,1], -1: [0,0,0]}
 
     x, y = convert_and_reshape(dose_to_probability, x_in,y_in)
 
