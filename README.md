@@ -141,6 +141,52 @@ Metrics per sample:
 - FN_ratio: false negatives ratio
 - RMSE: root mean squared error
 
+Check sample_data folder for real sample of inputs/outputs data and test run:
+
+```
+cd sample_data
+python3 ../Compare_imputation_to_WGS.py --ga input_genotype_array_100samples.vcf.gz --wgs whole_genome_file_100samples.vcf.gz --imputed imputed_file_100samples.vcf.gz
+```
+
+This message will show up if everything worked:
+
+```
+Processing chunk: 1 Max rows per chunk: 10000
+...
+Processing chunk: 52 Max rows per chunk: 10000
+1 Read imputed file time:  5.211546601727605
+2 Chunking time:  0.0284710843116045
+3 Calculation time:  90.96355835348368
+4 Merging calculations per sample time:  20.620813813060522
+Results per sample at: imputed_file_100samples.vcf_per_sample_results.txt
+Results per variant at: imputed_file_100samples.vcf_per_variant_results.txt
+Total run time (sec): 117.97938374243677
+
+```
+
+After running this example, you can visualize the results for the test sample data in:
+- imputed_file_100samples.vcf_per_sample_results.txt
+- imputed_file_100samples.vcf_per_variant_results.txt
+
+For example:
+
+```
+head imputed_file_100samples.vcf_per_variant_results.txt
+
+position        SNP     IMPUTED_MAF     WGS_MAF F-score concordance_P0  IQS     r2      precision       recall  TP      TN      FP      FN TP_ratio TN_ratio        FP_ratio        FN_ratio        RMSE
+22:16050783     22:16050783_A_G 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.001
+22:16050922     22:16050922_T_G 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+22:16050984     22:16050984_C_G 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+22:16051269     22:16051269_G_T 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+22:16051477     22:16051477_C_A 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.006
+22:16052240     22:16052240_C_G 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+22:16052271     22:16052271_G_A 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.001
+22:16052428     22:16052428_G_A 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+22:16052639     22:16052639_C_T 0.0     0.0     1.0     1.0     0.0     0.0     1.0     1.0     100     100     0       0       1.0     1.00.0      0.0     0.0
+
+```
+
+
 ## References:
 
 [1] Ramnarine S, Zhang J, Chen LS, Culverhouse R, Duan W, Hancock DB, Hartz SM, Johnson EO, Olfson E, Schwantes-An TH, Saccone NL. When does choice of accuracy measure alter imputation accuracy assessments?. PloS one. 2015 Oct 12;10(10):e0137601.
