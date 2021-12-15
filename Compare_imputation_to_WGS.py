@@ -463,8 +463,12 @@ def extract_sample_ids_from_vcf(input_file):
 def convert_gt_to_int(gt):
 
     genotype_to_int={'0/0': 0, '0|0': 0.0, '0/1': 1, '0|1':1, '1/0':1, '1|0':1, '1/1':2, '1|1':2, './0':-1, './1':-1, './.':-1, '0/.':-1, '1/.':-1}
-
-    result=genotype_to_int[gt[0:3]]
+    if('2' in gt[0:3]):
+        result=2
+        if(disable_warnings=='False'):
+            print("WARNING: you have provided multiallelic variants, r-squared calculation may be compromised because the dosage of '1/2', '2/1', '2/2' will be equal 2.0, unless you split the multiallelics into multiple biallelic variants.")
+    else:
+        result=genotype_to_int[gt[0:3]]
 
     return result
 
@@ -479,6 +483,13 @@ def extract_dose_from_line(vcf_line, disable_DS=False):
     result_line.append(pos)
 
     snp_id=pos+'_'+vcf_line[3]+'_'+vcf_line[4]
+
+    if(':' in vcf_line[8] and disable_DS==False):
+        field_labels=vcf_line[8].split(':')
+        if('DS' not in field_labels):
+            disable_DS=True
+        else:
+            index = field_labels.index('DS')            
 
     for column in vcf_line[9:]:
         if(':' in column and disable_DS==False):
@@ -525,10 +536,17 @@ def calculate_MAF(input_file, coordinates):
     for line in result:
         line=line.split('\t')
         if(len(line)>1):
-            maf=float(line[1])
-            if(maf>0.5):
-                maf=str(1-maf)
-                line[1]=maf
+            if(line[1]!='.'):
+                if(',' in line[1]):
+                    line[1]=line[1].split(',')[0]
+                maf=float(line[1])
+                if(maf>0.5):
+                    maf=str(1-maf)
+                    line[1]=maf
+            else:
+                if(disable_warnings=='False'):
+                    print("WARNING: MAF reported will be NaN because you did not provide an alternate allele for", line) 
+                line[1]='NaN'
             maf_result[line[0]]=line[1]
 
     #result = sp.check_output("plink --vcf "+input_file+" --freq --out "+out_name, encoding='UTF-8', shell=True)
@@ -1181,6 +1199,7 @@ def main():
     parser.add_argument('--sout', dest='sout', default="", type=str, required=False, nargs=1, help='optional output file path/name per sample, default is the same as the imputed file with _per_sample_results.txt suffix')
     parser.add_argument('--vout', dest='vout', default="", type=str, required=False, nargs=1, help='optional output file path/name per variant, default is the same as the imputed file with _per_variant_results.txt suffix')
     parser.add_argument('--xmode', dest='xmode', default="False", type=str, required=False, nargs=1, help='Option for developers, print additional scores.')
+    parser.add_argument('--disable_warnings', dest='disable_warnings', default="False", type=str, required=False, nargs=1, help='Option for developers, print additional scores.')
 
     try:
         args = parser.parse_args()
@@ -1214,6 +1233,9 @@ def main():
         REF_file = args.ref[0]
     if(args.xmode!='False'):
         X_mode = args.xmode[0]
+
+    global disable_warnings
+    disable_warnings = args.disable_warnings[0]
 
     print(max_total_rows, n_max, n_min)
 
